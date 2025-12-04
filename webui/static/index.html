@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Pigboy Geophone Oscilloscope</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #111;
+      color: #eee;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      padding: 8px 12px;
+      background: #222;
+      font-size: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #status {
+      font-weight: bold;
+    }
+    #container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
+    }
+    #controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      color: #ccc;
+      font-size: 13px;
+    }
+    button {
+      background: #333;
+      color: #eee;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    button:hover { background: #444; }
+
+    #scope {
+      border: 1px solid #444;
+      background: #000;
+      width: 100%;
+      height: 420px;
+    }
+  </style>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+  <header>
+    <span>Pigboy Geophone Monitor</span>
+    <span id="status">Connecting...</span>
+  </header>
+  <div id="container">
+    <div id="controls">
+      <button id="follow">Jump to Live</button>
+      <span>Live streaming waveform. Buffer: 45 s.</span>
+      <span id="view"></span>
+    </div>
+    <div id="scope"></div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const viewEl = document.getElementById('view');
+    const followBtn = document.getElementById('follow');
+
+    const BUFFER_SECONDS   = 45;
+    const SAMPLE_RATE_HZ   = 1000;
+    const MAX_POINTS       = BUFFER_SECONDS * SAMPLE_RATE_HZ;
+    const Y_MIN            = -8000000;
+    const Y_MAX            =  8000000;
+
+    let plotInitialized    = false;
+    let followLive         = true;   // auto-follow latest data
+    let suppressRelayout   = false;  // ignore relayout events we cause ourselves
+    let nextTime           = null;   // absolute seconds of next sample
+    let lastTime           = null;   // last sample's time
+
+    function initPlot() {
+      const trace = {
+        x: [],
+        y: [],
+        mode: 'lines',
+        line: {
+          width: 1,
+          simplify: false
+        },
+        name: 'Geophone'
+      };
+
+      const layout = {
+        margin: { l: 60, r: 10, t: 10, b: 30 },
+        paper_bgcolor: '#000',
+        plot_bgcolor: '#000',
+        showlegend: false,
+        xaxis: {
+          title: 'Time',
+          showgrid: false,
+          zeroline: false,
+          tickfont: { color: '#ccc' }
+        },
+        yaxis: {
+          title: 'Counts',
+          range: [Y_MIN, Y_MAX],
+          fixedrange: false,
+          autorange: false,
+          showgrid: true,
+          gridcolor: '#222',
+          tickfont: { color: '#ccc' }
+        }
+      };
+
+      const config = {
+        responsive: true,
+        displaylogo: false,
+        modeBarButtonsToRemove: ['select2d', 'lasso2d']
+      };
+
+      Plotly.newPlot('scope', [trace], layout, config).then((gd) => {
+        // Any user pan/zoom fires plotly_relayout => stop following
+        gd.on('plotly_relayout', (ev) => {
+          if (suppressRelayout) return;  // ignore our own relayouts
+          followLive = false;
+        });
+      });
+
+      plotInitialized = true;
+      updateViewLabel();
+    }
+
+    function updateViewLabel() {
+      if (lastTime == null) {
+        viewEl.textContent = 'No data yet';
+        return;
+      }
+      const end = lastTime;
+      const start = end - BUFFER_SECONDS;
+      viewEl.textContent =
+        `View: last ${BUFFER_SECONDS.toFixed(1)} s (from ${start.toFixed(3)}s to ${end.toFixed(3)}s)`;
+    }
+
+    function setLiveView() {
+      if (lastTime == null) return;
+      const end = lastTime;
+      const start = end - BUFFER_SECONDS;
+
+      suppressRelayout = true;
+      Plotly.relayout('scope', {
+        'xaxis.autorange': false,
+        'xaxis.range': [start, end]
+      }).then(() => {
+        suppressRelayout = false;
+      });
+
+      updateViewLabel();
+    }
+
+    function appendFrame(msg) {
+      if (!plotInitialized) initPlot();
+
+      const geo = msg.geo;
+      if (!geo || !geo.length) return;
+
+      const frameLen = geo.length;
+      const dt = 1.0 / SAMPLE_RATE_HZ;
+
+      if (nextTime === null) {
+        nextTime = msg.t0 || 0; // seconds
+      }
+
+      const xs = new Array(frameLen);
+      const ys = geo;
+
+      for (let i = 0; i < frameLen; i++) {
+        xs[i] = nextTime + i * dt;
+      }
+      nextTime += frameLen * dt;
+      lastTime = xs[frameLen - 1];
+
+      Plotly.extendTraces('scope', { x: [xs], y: [ys] }, [0], MAX_POINTS);
+
+      if (followLive) {
+        setLiveView();  // auto-scroll only when in follow mode
+      } else {
+        // user is inspecting; do not move the viewport
+        updateViewLabel();
+      }
+    }
+
+    followBtn.addEventListener('click', () => {
+      if (lastTime == null) return;
+      followLive = true;
+      setLiveView();
+    });
+
+    function connectWS() {
+      const proto = (location.protocol === 'https:') ? 'wss://' : 'ws://';
+      const wsUrl = proto + location.host + '/ws';
+      const ws = new WebSocket(wsUrl);
+
+      statusEl.textContent = 'Connecting...';
+      statusEl.style.color = '#f80';
+
+      ws.onopen = () => {
+        statusEl.textContent = 'Connected';
+        statusEl.style.color = '#0f0';
+      };
+
+      ws.onclose = () => {
+        statusEl.textContent = 'Disconnected, retrying...';
+        statusEl.style.color = '#f80';
+        setTimeout(connectWS, 2000);
+      };
+
+      ws.onerror = () => {
+        statusEl.textContent = 'Error';
+        statusEl.style.color = '#f00';
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          // Expect msg = { t0: <seconds>, geo: [..1000 samples..] }
+          appendFrame(msg);
+        } catch (e) {
+          console.error('Bad message', e);
+        }
+      };
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      initPlot();
+      connectWS();
+    });
+  </script>
+</body>
+</html>
