@@ -1,7 +1,9 @@
-// Rewrite of walter modem library example to use hardware serial defined UART instead of usb-c UART
-// Send direct AT commands from serial0 in raspberry pi over pi UART GPIO pins
-// Supports PPP mode a linux host 
-// Logan Stover (C) December 10 2025
+// Rewrite of walter modem library example to use hardware serial defined UART channel
+// Supports AT commands from RASPBERRY PI GPIO pins. PPP mode tested.
+// Copyright (c) Logan Joseph Stover December 10 2025. All rights reserved.
+// This source code is proprietary and confidential. 
+// Unauthorized copying, modification, distribution, or use of this file, via any medium, is strictly prohibited.
+// For licensing inquiries, contact: stover@protonmail.com
 
 #include "driver/gpio.h"
 #include <HardwareSerial.h>
