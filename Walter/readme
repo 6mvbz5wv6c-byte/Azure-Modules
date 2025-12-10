@@ -1,0 +1,1 @@
+Firmware for ESP32 Walter Sequans LTE modem module. ESP32 passes bidirectional serial commands from the Pi's physical TX/RX UART pins to the Walters onboard sequans modem. Enables serial AT commands and ppp mode. Tested 10/10/2015
