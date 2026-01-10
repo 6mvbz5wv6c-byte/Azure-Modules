@@ -100,9 +100,9 @@ class ADS1256:
     def ADS1256_WaitDRDY(self):
         for i in range(0,400000,1):
             if(config.digital_read(self.drdy_pin) == 0):
-                
+
                 break
-        if(i >= 400000):
+        if(i >= 399999):
             print ("Time Out ...\r\n")
         
      # Old chip ID read function.. Occasionally issues returning the wrong chip ID causing sample loop to fail

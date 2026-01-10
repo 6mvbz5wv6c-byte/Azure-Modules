@@ -4,6 +4,7 @@ from multiprocessing import Process, Queue
 
 from azure.iot.device.aio import IoTHubModuleClient
 from azure.iot.device import Message
+from azure.iot.device import exceptions as iot_exceptions
 
 from sampler_worker import sampler_process_main  # worker process
 
