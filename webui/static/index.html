@@ -30,6 +30,7 @@
       flex-direction: column;
       gap: 8px;
       padding: 12px;
+      overflow-y: auto;
     }
     #controls {
       display: flex;
@@ -37,6 +38,7 @@
       align-items: center;
       color: #ccc;
       font-size: 13px;
+      flex-wrap: wrap;
     }
     button {
       background: #333;
@@ -47,12 +49,142 @@
       cursor: pointer;
     }
     button:hover { background: #444; }
+    button.active { background: #0a5; border-color: #0c7; }
 
     #scope {
       border: 1px solid #444;
       background: #000;
       width: 100%;
       height: 420px;
+      flex-shrink: 0;
+    }
+
+    /* Filter Controls Panel */
+    #filter-panel {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 12px;
+      margin-top: 8px;
+    }
+    .filter-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .filter-header h3 {
+      margin: 0;
+      font-size: 14px;
+      color: #fff;
+    }
+    .filter-toggle {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* Simple Controls */
+    .simple-controls {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 10px;
+      background: #222;
+      border-radius: 4px;
+      margin-bottom: 10px;
+    }
+    .simple-controls label {
+      font-size: 14px;
+      font-weight: bold;
+      color: #0f0;
+    }
+    .simple-controls .control-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .freq-display {
+      font-size: 20px;
+      font-weight: bold;
+      color: #0ff;
+      min-width: 60px;
+      text-align: center;
+    }
+
+    /* Advanced Controls */
+    #advanced-panel {
+      display: none;
+      background: #181818;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 12px;
+      margin-top: 10px;
+    }
+    #advanced-panel.show { display: block; }
+
+    .advanced-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .filter-section {
+      background: #222;
+      border-radius: 4px;
+      padding: 12px;
+    }
+    .filter-section h4 {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      color: #aaa;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .param-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .param-row label {
+      flex: 0 0 120px;
+      font-size: 12px;
+      color: #ccc;
+    }
+    .param-row input[type="range"] {
+      flex: 1;
+      accent-color: #0a5;
+    }
+    .param-row .value {
+      flex: 0 0 50px;
+      text-align: right;
+      font-family: monospace;
+      color: #0ff;
+      font-size: 13px;
+    }
+    .param-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #0a5;
+    }
+
+    /* Status indicator for filter */
+    .filter-status {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: bold;
+      margin-left: 8px;
+    }
+    .filter-status.on { background: #0a5; color: #fff; }
+    .filter-status.off { background: #555; color: #999; }
+
+    /* Bandwidth indicator */
+    .bandwidth-indicator {
+      font-size: 11px;
+      color: #888;
+      margin-top: 4px;
     }
   </style>
   <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
@@ -69,9 +201,454 @@
       <span id="view"></span>
     </div>
     <div id="scope"></div>
+
+    <!-- Filter Control Panel -->
+    <div id="filter-panel">
+      <div class="filter-header">
+        <h3>Signal Filtering
+          <span id="filter-master-status" class="filter-status off">OFF</span>
+        </h3>
+        <div class="filter-toggle">
+          <button id="btn-filter-enable">Enable Filtering</button>
+          <button id="btn-advanced-toggle">Advanced Settings</button>
+        </div>
+      </div>
+
+      <!-- Simple Controls (always visible when filtering enabled) -->
+      <div class="simple-controls" id="simple-controls" style="display: none;">
+        <div class="control-group">
+          <label>Target Frequency:</label>
+          <button id="freq-down">-</button>
+          <span class="freq-display" id="freq-display">22 Hz</span>
+          <button id="freq-up">+</button>
+        </div>
+        <div class="control-group">
+          <label>60 Hz Filter:</label>
+          <button id="btn-60hz-toggle" class="active">ON</button>
+        </div>
+        <div class="control-group" style="margin-left: auto;">
+          <span id="filter-info" style="font-size: 11px; color: #888;">Bandpass: 17-27 Hz</span>
+        </div>
+      </div>
+
+      <!-- Advanced Controls (expandable) -->
+      <div id="advanced-panel">
+        <div class="advanced-grid">
+          <!-- Bandpass Filter Section -->
+          <div class="filter-section">
+            <h4>Bandpass Filter (Frequency Lock)</h4>
+            <div class="param-row">
+              <label>Center Frequency:</label>
+              <input type="range" id="bp-freq" min="15" max="30" value="22" step="0.5">
+              <span class="value" id="bp-freq-val">22.0 Hz</span>
+            </div>
+            <div class="param-row">
+              <label>Bandwidth:</label>
+              <input type="range" id="bp-bandwidth" min="2" max="20" value="10" step="1">
+              <span class="value" id="bp-bandwidth-val">10 Hz</span>
+            </div>
+            <div class="param-row">
+              <label>Filter Order:</label>
+              <input type="range" id="bp-order" min="1" max="8" value="2" step="1">
+              <span class="value" id="bp-order-val">2</span>
+            </div>
+            <div class="bandwidth-indicator" id="bp-range">Pass: 17.0 - 27.0 Hz</div>
+          </div>
+
+          <!-- 60 Hz Notch Filter Section -->
+          <div class="filter-section">
+            <h4>60 Hz Notch Filter (Powerline Rejection)</h4>
+            <div class="param-row">
+              <label>Enabled:</label>
+              <input type="checkbox" id="notch-enabled" checked>
+              <span class="value" id="notch-status">ON</span>
+            </div>
+            <div class="param-row">
+              <label>Notch Frequency:</label>
+              <input type="range" id="notch-freq" min="50" max="70" value="60" step="0.5">
+              <span class="value" id="notch-freq-val">60.0 Hz</span>
+            </div>
+            <div class="param-row">
+              <label>Notch Width (Q):</label>
+              <input type="range" id="notch-q" min="5" max="50" value="30" step="1">
+              <span class="value" id="notch-q-val">Q=30</span>
+            </div>
+            <div class="param-row">
+              <label>Filter Order:</label>
+              <input type="range" id="notch-order" min="1" max="8" value="2" step="1">
+              <span class="value" id="notch-order-val">2</span>
+            </div>
+            <div class="bandwidth-indicator" id="notch-range">Reject: 58.0 - 62.0 Hz</div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
+    // =========================================================================
+    // DSP LIBRARY - Butterworth IIR Filters
+    // =========================================================================
+
+    /**
+     * Compute Butterworth lowpass filter coefficients (analog prototype)
+     * Returns second-order sections (SOS) for numerical stability
+     */
+    class BiquadSection {
+      constructor(b0, b1, b2, a1, a2) {
+        this.b0 = b0;
+        this.b1 = b1;
+        this.b2 = b2;
+        this.a1 = a1;
+        this.a2 = a2;
+        // State variables for Direct Form II Transposed
+        this.z1 = 0;
+        this.z2 = 0;
+      }
+
+      reset() {
+        this.z1 = 0;
+        this.z2 = 0;
+      }
+
+      process(x) {
+        const y = this.b0 * x + this.z1;
+        this.z1 = this.b1 * x - this.a1 * y + this.z2;
+        this.z2 = this.b2 * x - this.a2 * y;
+        return y;
+      }
+    }
+
+    class IIRFilter {
+      constructor(sections) {
+        this.sections = sections;
+      }
+
+      reset() {
+        for (const s of this.sections) {
+          s.reset();
+        }
+      }
+
+      process(x) {
+        let y = x;
+        for (const s of this.sections) {
+          y = s.process(y);
+        }
+        return y;
+      }
+
+      processArray(input) {
+        const output = new Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          output[i] = this.process(input[i]);
+        }
+        return output;
+      }
+    }
+
+    /**
+     * Design a Butterworth bandpass filter
+     * @param {number} fc - Center frequency in Hz
+     * @param {number} bw - Bandwidth in Hz
+     * @param {number} fs - Sample rate in Hz
+     * @param {number} order - Filter order (per side, so 2 = 4th order overall)
+     * @returns {IIRFilter} Cascaded biquad filter
+     */
+    function designBandpass(fc, bw, fs, order) {
+      const fLow = Math.max(0.1, fc - bw / 2);
+      const fHigh = Math.min(fs / 2 - 1, fc + bw / 2);
+
+      // Pre-warp frequencies for bilinear transform
+      const w0 = 2 * Math.PI * fc / fs;
+      const wLow = 2 * fs * Math.tan(Math.PI * fLow / fs);
+      const wHigh = 2 * fs * Math.tan(Math.PI * fHigh / fs);
+      const bwWarped = wHigh - wLow;
+      const w0Warped = Math.sqrt(wLow * wHigh);
+
+      const sections = [];
+
+      // Design cascaded biquad sections
+      for (let i = 0; i < order; i++) {
+        // Butterworth pole angle
+        const theta = Math.PI * (2 * i + 1) / (2 * order) + Math.PI / 2;
+        const pReal = Math.cos(theta);
+        const pImag = Math.sin(theta);
+
+        // Transform LP prototype to BP
+        // Using bilinear transform with proper frequency mapping
+        const Q = w0Warped / bwWarped;
+        const alpha = Math.sin(w0) / (2 * Q);
+
+        const b0 = alpha;
+        const b1 = 0;
+        const b2 = -alpha;
+        const a0 = 1 + alpha;
+        const a1 = -2 * Math.cos(w0);
+        const a2 = 1 - alpha;
+
+        sections.push(new BiquadSection(
+          b0 / a0,
+          b1 / a0,
+          b2 / a0,
+          a1 / a0,
+          a2 / a0
+        ));
+      }
+
+      return new IIRFilter(sections);
+    }
+
+    /**
+     * Design a notch (band-reject) filter
+     * @param {number} f0 - Notch frequency in Hz
+     * @param {number} Q - Quality factor (higher = narrower notch)
+     * @param {number} fs - Sample rate in Hz
+     * @param {number} order - Number of cascaded notch sections
+     * @returns {IIRFilter} Notch filter
+     */
+    function designNotch(f0, Q, fs, order) {
+      const sections = [];
+      const w0 = 2 * Math.PI * f0 / fs;
+      const alpha = Math.sin(w0) / (2 * Q);
+
+      for (let i = 0; i < order; i++) {
+        const b0 = 1;
+        const b1 = -2 * Math.cos(w0);
+        const b2 = 1;
+        const a0 = 1 + alpha;
+        const a1 = -2 * Math.cos(w0);
+        const a2 = 1 - alpha;
+
+        sections.push(new BiquadSection(
+          b0 / a0,
+          b1 / a0,
+          b2 / a0,
+          a1 / a0,
+          a2 / a0
+        ));
+      }
+
+      return new IIRFilter(sections);
+    }
+
+    // =========================================================================
+    // FILTER STATE MANAGEMENT
+    // =========================================================================
+
+    const filterState = {
+      enabled: false,
+
+      // Bandpass parameters
+      bpFreq: 22,
+      bpBandwidth: 10,
+      bpOrder: 2,
+
+      // Notch parameters
+      notchEnabled: true,
+      notchFreq: 60,
+      notchQ: 30,
+      notchOrder: 2,
+
+      // Active filter instances
+      bandpassFilter: null,
+      notchFilter: null,
+
+      // Sample rate
+      sampleRate: 1000
+    };
+
+    function rebuildFilters() {
+      if (!filterState.enabled) return;
+
+      // Rebuild bandpass filter
+      filterState.bandpassFilter = designBandpass(
+        filterState.bpFreq,
+        filterState.bpBandwidth,
+        filterState.sampleRate,
+        filterState.bpOrder
+      );
+
+      // Rebuild notch filter
+      if (filterState.notchEnabled) {
+        filterState.notchFilter = designNotch(
+          filterState.notchFreq,
+          filterState.notchQ,
+          filterState.sampleRate,
+          filterState.notchOrder
+        );
+      } else {
+        filterState.notchFilter = null;
+      }
+
+      updateFilterInfo();
+    }
+
+    function applyFilters(samples) {
+      if (!filterState.enabled) return samples;
+
+      let result = samples;
+
+      // Apply notch filter first (remove 60Hz before bandpass)
+      if (filterState.notchFilter) {
+        result = filterState.notchFilter.processArray(result);
+      }
+
+      // Apply bandpass filter
+      if (filterState.bandpassFilter) {
+        result = filterState.bandpassFilter.processArray(result);
+      }
+
+      return result;
+    }
+
+    function updateFilterInfo() {
+      const fLow = Math.max(0.1, filterState.bpFreq - filterState.bpBandwidth / 2);
+      const fHigh = filterState.bpFreq + filterState.bpBandwidth / 2;
+
+      document.getElementById('filter-info').textContent =
+        `Bandpass: ${fLow.toFixed(0)}-${fHigh.toFixed(0)} Hz`;
+
+      document.getElementById('bp-range').textContent =
+        `Pass: ${fLow.toFixed(1)} - ${fHigh.toFixed(1)} Hz`;
+
+      const notchLow = filterState.notchFreq - filterState.notchFreq / filterState.notchQ;
+      const notchHigh = filterState.notchFreq + filterState.notchFreq / filterState.notchQ;
+      document.getElementById('notch-range').textContent =
+        `Reject: ${notchLow.toFixed(1)} - ${notchHigh.toFixed(1)} Hz`;
+    }
+
+    // =========================================================================
+    // UI CONTROL BINDINGS
+    // =========================================================================
+
+    function initFilterControls() {
+      // Master enable/disable
+      const btnEnable = document.getElementById('btn-filter-enable');
+      const simpleControls = document.getElementById('simple-controls');
+      const masterStatus = document.getElementById('filter-master-status');
+
+      btnEnable.addEventListener('click', () => {
+        filterState.enabled = !filterState.enabled;
+
+        if (filterState.enabled) {
+          btnEnable.textContent = 'Disable Filtering';
+          btnEnable.classList.add('active');
+          simpleControls.style.display = 'flex';
+          masterStatus.textContent = 'ON';
+          masterStatus.className = 'filter-status on';
+          rebuildFilters();
+        } else {
+          btnEnable.textContent = 'Enable Filtering';
+          btnEnable.classList.remove('active');
+          simpleControls.style.display = 'none';
+          masterStatus.textContent = 'OFF';
+          masterStatus.className = 'filter-status off';
+        }
+      });
+
+      // Advanced panel toggle
+      const btnAdvanced = document.getElementById('btn-advanced-toggle');
+      const advancedPanel = document.getElementById('advanced-panel');
+
+      btnAdvanced.addEventListener('click', () => {
+        advancedPanel.classList.toggle('show');
+        btnAdvanced.textContent = advancedPanel.classList.contains('show')
+          ? 'Hide Advanced'
+          : 'Advanced Settings';
+      });
+
+      // Simple frequency controls
+      const freqDisplay = document.getElementById('freq-display');
+      const bpFreqSlider = document.getElementById('bp-freq');
+
+      document.getElementById('freq-down').addEventListener('click', () => {
+        filterState.bpFreq = Math.max(15, filterState.bpFreq - 1);
+        freqDisplay.textContent = filterState.bpFreq + ' Hz';
+        bpFreqSlider.value = filterState.bpFreq;
+        document.getElementById('bp-freq-val').textContent = filterState.bpFreq.toFixed(1) + ' Hz';
+        rebuildFilters();
+      });
+
+      document.getElementById('freq-up').addEventListener('click', () => {
+        filterState.bpFreq = Math.min(30, filterState.bpFreq + 1);
+        freqDisplay.textContent = filterState.bpFreq + ' Hz';
+        bpFreqSlider.value = filterState.bpFreq;
+        document.getElementById('bp-freq-val').textContent = filterState.bpFreq.toFixed(1) + ' Hz';
+        rebuildFilters();
+      });
+
+      // 60Hz toggle button
+      const btn60hz = document.getElementById('btn-60hz-toggle');
+      btn60hz.addEventListener('click', () => {
+        filterState.notchEnabled = !filterState.notchEnabled;
+        btn60hz.textContent = filterState.notchEnabled ? 'ON' : 'OFF';
+        btn60hz.classList.toggle('active', filterState.notchEnabled);
+        document.getElementById('notch-enabled').checked = filterState.notchEnabled;
+        document.getElementById('notch-status').textContent = filterState.notchEnabled ? 'ON' : 'OFF';
+        rebuildFilters();
+      });
+
+      // Advanced: Bandpass frequency slider
+      bpFreqSlider.addEventListener('input', (e) => {
+        filterState.bpFreq = parseFloat(e.target.value);
+        document.getElementById('bp-freq-val').textContent = filterState.bpFreq.toFixed(1) + ' Hz';
+        freqDisplay.textContent = Math.round(filterState.bpFreq) + ' Hz';
+        rebuildFilters();
+      });
+
+      // Advanced: Bandpass bandwidth slider
+      document.getElementById('bp-bandwidth').addEventListener('input', (e) => {
+        filterState.bpBandwidth = parseFloat(e.target.value);
+        document.getElementById('bp-bandwidth-val').textContent = filterState.bpBandwidth + ' Hz';
+        rebuildFilters();
+      });
+
+      // Advanced: Bandpass order slider
+      document.getElementById('bp-order').addEventListener('input', (e) => {
+        filterState.bpOrder = parseInt(e.target.value);
+        document.getElementById('bp-order-val').textContent = filterState.bpOrder;
+        rebuildFilters();
+      });
+
+      // Advanced: Notch enabled checkbox
+      document.getElementById('notch-enabled').addEventListener('change', (e) => {
+        filterState.notchEnabled = e.target.checked;
+        document.getElementById('notch-status').textContent = filterState.notchEnabled ? 'ON' : 'OFF';
+        btn60hz.textContent = filterState.notchEnabled ? 'ON' : 'OFF';
+        btn60hz.classList.toggle('active', filterState.notchEnabled);
+        rebuildFilters();
+      });
+
+      // Advanced: Notch frequency slider
+      document.getElementById('notch-freq').addEventListener('input', (e) => {
+        filterState.notchFreq = parseFloat(e.target.value);
+        document.getElementById('notch-freq-val').textContent = filterState.notchFreq.toFixed(1) + ' Hz';
+        rebuildFilters();
+      });
+
+      // Advanced: Notch Q slider
+      document.getElementById('notch-q').addEventListener('input', (e) => {
+        filterState.notchQ = parseFloat(e.target.value);
+        document.getElementById('notch-q-val').textContent = 'Q=' + filterState.notchQ;
+        rebuildFilters();
+      });
+
+      // Advanced: Notch order slider
+      document.getElementById('notch-order').addEventListener('input', (e) => {
+        filterState.notchOrder = parseInt(e.target.value);
+        document.getElementById('notch-order-val').textContent = filterState.notchOrder;
+        rebuildFilters();
+      });
+
+      // Initialize display values
+      updateFilterInfo();
+    }
+
+    // =========================================================================
+    // CHART AND WEBSOCKET (Original Code with Filter Integration)
+    // =========================================================================
+
     const statusEl = document.getElementById('status');
     const viewEl = document.getElementById('view');
     const followBtn = document.getElementById('follow');
@@ -88,6 +665,9 @@
     let nextTime           = null;   // absolute seconds of next sample
     let lastTime           = null;   // last sample's time
 
+    // Track current Y range for auto-scaling when filtering
+    let autoScaleY = false;
+
     function initPlot() {
       const trace = {
         x: [],
@@ -95,7 +675,8 @@
         mode: 'lines',
         line: {
           width: 1,
-          simplify: false
+          simplify: false,
+          color: '#00ff88'
         },
         name: 'Geophone'
       };
@@ -106,8 +687,9 @@
         plot_bgcolor: '#000',
         showlegend: false,
         xaxis: {
-          title: 'Time',
-          showgrid: false,
+          title: 'Time (s)',
+          showgrid: true,
+          gridcolor: '#222',
           zeroline: false,
           tickfont: { color: '#ccc' }
         },
@@ -147,8 +729,9 @@
       }
       const end = lastTime;
       const start = end - BUFFER_SECONDS;
+      const filterTag = filterState.enabled ? ' [FILTERED]' : '';
       viewEl.textContent =
-        `View: last ${BUFFER_SECONDS.toFixed(1)} s (from ${start.toFixed(3)}s to ${end.toFixed(3)}s)`;
+        `View: last ${BUFFER_SECONDS.toFixed(1)} s (from ${start.toFixed(3)}s to ${end.toFixed(3)}s)${filterTag}`;
     }
 
     function setLiveView() {
@@ -170,7 +753,7 @@
     function appendFrame(msg) {
       if (!plotInitialized) initPlot();
 
-      const geo = msg.geo;
+      let geo = msg.geo;
       if (!geo || !geo.length) return;
 
       const frameLen = geo.length;
@@ -178,6 +761,11 @@
 
       if (nextTime === null) {
         nextTime = msg.t0 || 0; // seconds
+      }
+
+      // Apply filtering if enabled
+      if (filterState.enabled) {
+        geo = applyFilters(geo);
       }
 
       const xs = new Array(frameLen);
@@ -242,6 +830,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
       initPlot();
+      initFilterControls();
       connectWS();
     });
   </script>
