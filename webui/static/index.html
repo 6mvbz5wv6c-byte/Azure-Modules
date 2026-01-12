@@ -1100,7 +1100,7 @@
     }
 
     // =========================================================================
-    // CHART & WEBSOCKET
+    // CHART & WEBSOCKET - Circular Buffer Implementation
     // =========================================================================
 
     const statusEl = document.getElementById('status');
@@ -1108,34 +1108,35 @@
     const followBtn = document.getElementById('follow');
 
     const BUFFER_SECONDS = 45;
-    const SAMPLE_RATE_HZ = 1000;
-    const MAX_POINTS = BUFFER_SECONDS * SAMPLE_RATE_HZ;
+    const DISPLAY_RATE = 1000;  // Target display rate (samples shown per second)
+    const BUFFER_SIZE = BUFFER_SECONDS * DISPLAY_RATE;
+
+    // Circular buffer for chart data
+    const chartBuffer = {
+      y: new Float64Array(BUFFER_SIZE),
+      writeIndex: 0,
+      sampleCount: 0,       // Total samples received (monotonic counter)
+      startTimeMs: null,    // Wall clock time when first sample arrived
+      effectiveRate: DISPLAY_RATE
+    };
 
     let plotInitialized = false;
     let followLive = true;
     let suppressRelayout = false;
-    let nextTimeMs = null;  // Epoch milliseconds
-    let lastTimeMs = null;
+    let lastFrameTime = null;
+    let frameCount = 0;
 
-    // Format milliseconds to HH:MM:SS
     function formatTime(ms) {
       const d = new Date(ms);
-      return d.toTimeString().split(' ')[0]; // HH:MM:SS
-    }
-
-    // Format milliseconds to HH:MM:SS.mmm (with milliseconds)
-    function formatTimeMs(ms) {
-      const d = new Date(ms);
-      const hms = d.toTimeString().split(' ')[0];
-      const millis = String(d.getMilliseconds()).padStart(3, '0');
-      return `${hms}.${millis}`;
+      return d.toTimeString().split(' ')[0];
     }
 
     function initPlot() {
       Plotly.newPlot('scope', [{
-        x: [], y: [],
+        x: [],
+        y: [],
         mode: 'lines',
-        line: { width: 1, simplify: false, color: '#00ff88' }
+        line: { width: 1, color: '#00ff88' }
       }], {
         margin: { l: 55, r: 10, t: 10, b: 40 },
         paper_bgcolor: '#000',
@@ -1150,31 +1151,89 @@
           zeroline: false,
           tickfont: { color: '#888', size: 10 }
         },
-        yaxis: { title: 'Counts', showgrid: true, gridcolor: '#222', tickfont: { color: '#888', size: 10 }, autorange: true }
+        yaxis: {
+          title: 'Counts',
+          showgrid: true,
+          gridcolor: '#222',
+          tickfont: { color: '#888', size: 10 },
+          autorange: true
+        }
       }, {
-        responsive: true, displaylogo: false, modeBarButtonsToRemove: ['select2d', 'lasso2d']
+        responsive: true,
+        displaylogo: false,
+        modeBarButtonsToRemove: ['select2d', 'lasso2d']
       }).then((gd) => {
-        gd.on('plotly_relayout', () => { if (!suppressRelayout) followLive = false; });
+        gd.on('plotly_relayout', () => {
+          if (!suppressRelayout) followLive = false;
+        });
       });
       plotInitialized = true;
     }
 
-    function setLiveView() {
-      if (lastTimeMs == null) return;
-      suppressRelayout = true;
-      const rangeStart = new Date(lastTimeMs - BUFFER_SECONDS * 1000);
-      const rangeEnd = new Date(lastTimeMs);
-      Plotly.relayout('scope', { 'xaxis.range': [rangeStart, rangeEnd] })
-        .then(() => { suppressRelayout = false; });
-    }
+    function updateChart() {
+      if (!plotInitialized || chartBuffer.sampleCount === 0) return;
 
-    // Track frame timing for sample rate detection
-    let lastFrameTime = null;
-    let frameCount = 0;
-    let continuousTimeMs = null;  // Tracks continuous time across frames
+      const count = Math.min(chartBuffer.sampleCount, BUFFER_SIZE);
+      const rate = chartBuffer.effectiveRate;
+      const msPerSample = 1000 / rate;
+
+      // Calculate the time of the most recent sample
+      const latestTimeMs = chartBuffer.startTimeMs + (chartBuffer.sampleCount * msPerSample);
+
+      // Build arrays for Plotly
+      const xs = new Array(count);
+      const ys = new Array(count);
+
+      // Read from circular buffer in correct order
+      const startIdx = chartBuffer.sampleCount > BUFFER_SIZE
+        ? chartBuffer.writeIndex
+        : 0;
+
+      for (let i = 0; i < count; i++) {
+        const bufIdx = (startIdx + i) % BUFFER_SIZE;
+        ys[i] = chartBuffer.y[bufIdx];
+
+        // Calculate time for this sample
+        const sampleOffset = count - 1 - i;  // How many samples before latest
+        xs[i] = new Date(latestTimeMs - (sampleOffset * msPerSample));
+      }
+
+      // Update chart efficiently with react
+      Plotly.react('scope', [{
+        x: xs,
+        y: ys,
+        mode: 'lines',
+        line: { width: 1, color: '#00ff88' }
+      }], {
+        margin: { l: 55, r: 10, t: 10, b: 40 },
+        paper_bgcolor: '#000',
+        plot_bgcolor: '#000',
+        showlegend: false,
+        xaxis: {
+          title: 'Time',
+          type: 'date',
+          tickformat: '%H:%M:%S',
+          showgrid: true,
+          gridcolor: '#222',
+          zeroline: false,
+          tickfont: { color: '#888', size: 10 },
+          range: followLive ? [new Date(latestTimeMs - BUFFER_SECONDS * 1000), new Date(latestTimeMs)] : undefined
+        },
+        yaxis: {
+          title: 'Counts',
+          showgrid: true,
+          gridcolor: '#222',
+          tickfont: { color: '#888', size: 10 },
+          autorange: true
+        }
+      });
+
+      return latestTimeMs;
+    }
 
     function appendFrame(msg) {
       if (!plotInitialized) initPlot();
+
       let geo = msg.geo;
       if (!geo || !geo.length) return;
 
@@ -1193,43 +1252,30 @@
       lastFrameTime = now;
       frameCount++;
 
-      // Calculate frame duration based on INPUT samples at INPUT sample rate
-      // This is how long the samples actually represent, regardless of decimation
-      const inputFrameDurationMs = (inputLen / filterState.sampleRate) * 1000;
+      // Initialize start time on first frame
+      if (chartBuffer.startTimeMs === null) {
+        chartBuffer.startTimeMs = now - (inputLen / filterState.sampleRate) * 1000;
+      }
 
-      // Apply DSP filters (notch always applied if enabled, even when "filters" off)
+      // Apply DSP filters
       const needsProcessing = filterState.enabled || filterState.lockInEnabled || filterState.notchEnabled;
       if (needsProcessing) {
         geo = applyFilters(geo);
       }
 
-      const outputLen = geo.length;
+      // Update effective rate based on output
+      const inputDurationSec = inputLen / filterState.sampleRate;
+      chartBuffer.effectiveRate = geo.length / inputDurationSec;
 
-      // Initialize or resync continuous time if needed
-      // Resync if gap is too large (>2 seconds) indicating reconnection
-      if (continuousTimeMs === null || Math.abs(now - continuousTimeMs) > 2000) {
-        continuousTimeMs = now - inputFrameDurationMs;
+      // Write samples to circular buffer
+      for (let i = 0; i < geo.length; i++) {
+        chartBuffer.y[chartBuffer.writeIndex] = geo[i];
+        chartBuffer.writeIndex = (chartBuffer.writeIndex + 1) % BUFFER_SIZE;
+        chartBuffer.sampleCount++;
       }
 
-      // Calculate time step for OUTPUT samples
-      // The output samples span the same time duration as input, just fewer points
-      const dtMs = inputFrameDurationMs / outputLen;
-
-      // Generate timestamps starting from continuous time
-      const frameStartMs = continuousTimeMs;
-      const xs = new Array(outputLen);
-      for (let i = 0; i < outputLen; i++) {
-        xs[i] = new Date(frameStartMs + i * dtMs);
-      }
-
-      // Advance continuous time by the actual frame duration
-      continuousTimeMs += inputFrameDurationMs;
-      lastTimeMs = continuousTimeMs;
-
-      // Adjust max points for chart buffer based on display rate
-      const effectiveRate = outputLen / (inputFrameDurationMs / 1000);
-      const effectiveMaxPoints = Math.ceil(BUFFER_SECONDS * effectiveRate);
-      Plotly.extendTraces('scope', { x: [xs], y: [geo] }, [0], effectiveMaxPoints);
+      // Update chart and get latest time
+      const latestTimeMs = updateChart();
 
       // Build status string
       let mode = '';
@@ -1239,29 +1285,50 @@
       if (filterState.lockInEnabled) parts.push('LI');
       if (parts.length > 0) mode = ` [${parts.join('+')}]`;
 
-      // Show sample rate info
-      const rateInfo = filterState.decimationFactor > 1 ?
-        `${(filterState.sampleRate/1000).toFixed(1)}k→${(effectiveRate/1000).toFixed(1)}k` :
-        `${(filterState.sampleRate/1000).toFixed(1)}kHz`;
+      const rateInfo = filterState.decimationFactor > 1
+        ? `${(filterState.sampleRate/1000).toFixed(1)}k→${(chartBuffer.effectiveRate/1000).toFixed(1)}k`
+        : `${(filterState.sampleRate/1000).toFixed(1)}kHz`;
 
-      viewEl.textContent = `${formatTime(lastTimeMs)} ${rateInfo}${mode}`;
-
-      if (followLive) setLiveView();
+      viewEl.textContent = `${formatTime(latestTimeMs || now)} ${rateInfo}${mode}`;
     }
 
-    followBtn.addEventListener('click', () => { followLive = true; setLiveView(); });
+    followBtn.addEventListener('click', () => {
+      followLive = true;
+      updateChart();
+    });
 
     function connectWS() {
       const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
-      statusEl.textContent = 'Connecting...'; statusEl.style.color = '#f80';
+      statusEl.textContent = 'Connecting...';
+      statusEl.style.color = '#f80';
 
-      ws.onopen = () => { statusEl.textContent = 'Connected'; statusEl.style.color = '#0f0'; };
-      ws.onclose = () => { statusEl.textContent = 'Reconnecting...'; statusEl.style.color = '#f80'; setTimeout(connectWS, 2000); };
-      ws.onerror = () => { statusEl.textContent = 'Error'; statusEl.style.color = '#f00'; };
-      ws.onmessage = (e) => { try { appendFrame(JSON.parse(e.data)); } catch (err) { console.error(err); } };
+      ws.onopen = () => {
+        statusEl.textContent = 'Connected';
+        statusEl.style.color = '#0f0';
+      };
+      ws.onclose = () => {
+        statusEl.textContent = 'Reconnecting...';
+        statusEl.style.color = '#f80';
+        setTimeout(connectWS, 2000);
+      };
+      ws.onerror = () => {
+        statusEl.textContent = 'Error';
+        statusEl.style.color = '#f00';
+      };
+      ws.onmessage = (e) => {
+        try {
+          appendFrame(JSON.parse(e.data));
+        } catch (err) {
+          console.error(err);
+        }
+      };
     }
 
-    document.addEventListener('DOMContentLoaded', () => { initPlot(); initFilterControls(); connectWS(); });
+    document.addEventListener('DOMContentLoaded', () => {
+      initPlot();
+      initFilterControls();
+      connectWS();
+    });
   </script>
 </body>
 </html>
