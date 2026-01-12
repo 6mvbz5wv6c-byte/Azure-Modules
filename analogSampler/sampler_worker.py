@@ -66,9 +66,12 @@ def send_udp_frame(buf: np.ndarray, start_us: int, end_us: int):
 
     try:
         udp_sock.sendto(packet, udp_target)
-    except OSError:
-        # Visualization-only path; ignore failures
-        pass
+        if frame_index <= 3:
+            print(f"[UDP] Sent frame {frame_index} ({len(packet)} bytes) to {udp_target}")
+    except OSError as e:
+        if frame_index <= 3:
+            print(f"[UDP] Error sending frame {frame_index}: {e}")
+        # Visualization-only path; continue on failures
 
 
 def sampler_process_main(frame_queue):
@@ -78,11 +81,21 @@ def sampler_process_main(frame_queue):
 
     Each item: (start_us: int, end_us: int, samples_bytes: bytes)
     """
+    import time  # ensure time is available
+
+    print(f"[sampler_proc] === STARTING SAMPLER ===")
+    print(f"[sampler_proc] Config: SAMPLE_RATE_HZ={SAMPLE_RATE_HZ}, FRAME_SAMPLES={FRAME_SAMPLES}")
+    print(f"[sampler_proc] Config: DIFF_CHANNEL={DIFF_CHANNEL}, PGA_GAIN={PGA_GAIN}")
+    print(f"[sampler_proc] UDP target: {UDP_TARGET_HOST}:{UDP_TARGET_PORT}")
+
     try:
+        print("[sampler_proc] Creating ADS1256 instance...")
         adc = ADS1256.ADS1256()
+        print(f"[sampler_proc] ADS1256 instance created, pins: RST={adc.rst_pin}, CS={adc.cs_pin}, DRDY={adc.drdy_pin}")
 
         attempt = 1
         while True:
+            print(f"[sampler_proc] ADS1256_init attempt {attempt}...")
             rc = adc.ADS1256_init()
             print(f"[sampler_proc] ADS1256_init attempt {attempt} rc={rc}")
             if rc == 0:
@@ -113,13 +126,17 @@ def sampler_process_main(frame_queue):
         drate_value = ADS1256.ADS1256_DRATE_E[SAMPLE_RATE_KEY]
 
         # Configure and enter continuous conversion on the chosen diff channel
+        print(f"[sampler_proc] Starting continuous diff mode on channel {DIFF_CHANNEL}...")
+        print(f"[sampler_proc] Gain: {GAIN_KEY}={gain_value}, Rate: {SAMPLE_RATE_KEY}={drate_value}")
         adc.ADS1256_StartContinuousDiff(
             diff_channel=DIFF_CHANNEL,
             gain=gain_value,
             drate=drate_value,
         )
+        print("[sampler_proc] Continuous mode started successfully")
 
-    except Exception:
+    except Exception as e:
+        print(f"[sampler_proc] FATAL ERROR during init: {e}")
         traceback.print_exc()
         return
 
@@ -133,6 +150,18 @@ def sampler_process_main(frame_queue):
     # Establish a fixed, ideal time grid for the frames
     base_start_us = utc_us_now()
     frame_index = 0
+
+    print(f"[sampler_proc] === ENTERING SAMPLE LOOP ===")
+    print(f"[sampler_proc] Reading first sample to verify ADC communication...")
+
+    # Test read a single sample
+    try:
+        test_sample = adc.ADS1256_ReadContinuousSample()
+        print(f"[sampler_proc] First sample read OK: {test_sample}")
+    except Exception as e:
+        print(f"[sampler_proc] ERROR reading first sample: {e}")
+        traceback.print_exc()
+        return
 
     while True:
         # Idealized timestamps from the fixed time grid
@@ -165,9 +194,12 @@ def sampler_process_main(frame_queue):
                 pass
 
         frame_index += 1
+        if frame_index == 1:
+            # Extra debug for first frame
+            print(f"[sampler_proc] First frame sent! min={buf.min()}, max={buf.max()}, mean={buf.mean():.0f}")
         if frame_index % 10 == 0:
             try:
                 qs = frame_queue.qsize()
             except NotImplementedError:
                 qs = -1
-            print(f"[sampler_proc] frame {frame_index}, qsize={qs}")
+            print(f"[sampler_proc] frame {frame_index}, qsize={qs}, last_sample={buf[-1]}")
