@@ -69,16 +69,25 @@ def module_init():
     return 0;
 
 
-def wait_drdy_edge(timeout_ms=1000):
+def wait_drdy(timeout_us=200000):
     """
-    Efficient DRDY wait using GPIO edge detection instead of busy-polling.
-    Returns True if DRDY went low, False on timeout.
+    Wait for DRDY to go low, indicating data is ready.
+    Uses optimized polling with micro-sleeps for high sample rates.
+
+    At 7500 SPS, DRDY pulses every ~133us, so we check frequently.
     """
-    # If already low, return immediately
+    # If already low, return immediately (common case in continuous mode)
     if GPIO.input(DRDY_PIN) == 0:
         return True
-    # Wait for falling edge with timeout
-    result = GPIO.wait_for_edge(DRDY_PIN, GPIO.FALLING, timeout=timeout_ms)
-    return result is not None
+
+    # Fast polling loop with small sleeps to reduce CPU while maintaining responsiveness
+    # At 7500 SPS we have 133us between samples, so sleep ~10us between checks
+    deadline = time.time() + (timeout_us / 1_000_000)
+    while time.time() < deadline:
+        if GPIO.input(DRDY_PIN) == 0:
+            return True
+        time.sleep(0.000010)  # 10us sleep - balances CPU usage vs latency
+
+    return False
 
 ### END OF FILE ###

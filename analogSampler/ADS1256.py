@@ -100,9 +100,9 @@ class ADS1256:
     def ADS1256_WaitDRDY(self):
         """
         Wait for DRDY to go low, indicating data is ready.
-        Uses efficient GPIO edge detection instead of busy-polling.
+        Uses optimized polling with micro-sleeps.
         """
-        if not config.wait_drdy_edge(timeout_ms=1000):
+        if not config.wait_drdy(timeout_us=200000):
             print("DRDY Timeout!")
         
      # Old chip ID read function.. Occasionally issues returning the wrong chip ID causing sample loop to fail
