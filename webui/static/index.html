@@ -312,10 +312,10 @@
             </div>
             <div class="param-row">
               <label>Order:</label>
-              <input type="range" id="bp-order" min="2" max="8" value="4" step="2">
-              <span class="value" id="bp-order-val">4</span>
+              <input type="range" id="bp-order" min="2" max="12" value="6" step="2">
+              <span class="value" id="bp-order-val">6</span>
             </div>
-            <div class="info-text" id="bp-info">BP: 17-27 Hz, -24dB/oct</div>
+            <div class="info-text" id="bp-info">BP: 17-27 Hz, -36dB/oct</div>
             <canvas id="bp-response" class="freq-response" width="220" height="50"></canvas>
           </div>
 
@@ -339,15 +339,15 @@
             </div>
             <div class="param-row">
               <label>Depth (stages):</label>
-              <input type="range" id="notch-order" min="1" max="4" value="2" step="1">
-              <span class="value" id="notch-order-val">2</span>
+              <input type="range" id="notch-order" min="1" max="6" value="3" step="1">
+              <span class="value" id="notch-order-val">3</span>
             </div>
             <div class="param-row">
               <label>Harmonics:</label>
               <input type="checkbox" id="notch-harmonics">
               <span class="value" id="harmonics-status">OFF</span>
             </div>
-            <div class="info-text" id="notch-info">Notch: -40dB @ 60Hz</div>
+            <div class="info-text" id="notch-info">Notch: -60dB @ 60Hz</div>
           </div>
         </div>
       </div>
@@ -537,6 +537,21 @@
     // =========================================================================
 
     /**
+     * 4th-order Butterworth lowpass for lock-in (cascaded biquads)
+     * Much better rejection than 2nd order: -80dB/decade vs -40dB/decade
+     */
+    function designButterworth4LP(fc, fs) {
+      // 4th order Butterworth: two cascaded 2nd-order sections
+      // Q values for 4th order: Q1 = 0.5412, Q2 = 1.3066
+      const Q1 = 0.5412;
+      const Q2 = 1.3066;
+      return new FilterChain([
+        designLP2(fc, Q1, fs),
+        designLP2(fc, Q2, fs)
+      ]);
+    }
+
+    /**
      * Lock-In Amplifier: Extracts signal at exact reference frequency
      *
      * Theory: Multiply signal by sin(ωt) and cos(ωt), then lowpass filter.
@@ -544,6 +559,8 @@
      * Magnitude R = √(I² + Q²), Phase θ = atan2(Q, I)
      *
      * Equivalent to infinite-Q bandpass at the reference frequency.
+     *
+     * IMPROVED: Now uses 4th-order Butterworth LP for -80dB/decade rejection
      */
     class LockInAmplifier {
       constructor(refFreq, timeConstant, sampleRate) {
@@ -560,14 +577,12 @@
 
       setTimeConstant(tc) {
         this.timeConstant = tc;
-        // Single-pole IIR lowpass: alpha = dt / (tc + dt)
-        const dt = 1 / this.sampleRate;
-        this.alpha = dt / (tc + dt);
-
-        // For better rejection, use 2nd order Butterworth LP
+        // Cutoff frequency from time constant
         const lpFreq = 1 / (2 * Math.PI * tc);
-        this.lpI = designLP2(lpFreq, 0.707, this.sampleRate);
-        this.lpQ = designLP2(lpFreq, 0.707, this.sampleRate);
+
+        // Use 4th-order Butterworth for superior rejection (-80dB/decade)
+        this.lpI = designButterworth4LP(lpFreq, this.sampleRate);
+        this.lpQ = designButterworth4LP(lpFreq, this.sampleRate);
       }
 
       setFrequency(freq) {
@@ -601,7 +616,7 @@
           const mixI = x * sinRef * 2;  // Factor of 2 for correct amplitude
           const mixQ = x * cosRef * 2;
 
-          // Lowpass filter to extract DC component
+          // Lowpass filter to extract DC component (4th order for better rejection)
           const I = this.lpI.process(mixI);
           const Q = this.lpQ.process(mixQ);
 
@@ -630,24 +645,68 @@
     }
 
     // =========================================================================
+    // DECIMATOR - Process at high rate, output at display rate
+    // =========================================================================
+
+    /**
+     * Decimator with anti-aliasing filter
+     * Reduces sample rate by factor M while preventing aliasing
+     */
+    class Decimator {
+      constructor(factor, inputRate) {
+        this.factor = factor;
+        this.inputRate = inputRate;
+        this.outputRate = inputRate / factor;
+
+        // Anti-aliasing filter: LP at outputRate/2 (Nyquist of output)
+        // Use 6th order Butterworth for steep rolloff
+        const cutoff = this.outputRate * 0.45; // Slight margin below Nyquist
+        this.antiAlias = new FilterChain([
+          designLP2(cutoff, 0.5176, inputRate),  // 6th order Q values
+          designLP2(cutoff, 0.7071, inputRate),
+          designLP2(cutoff, 1.9319, inputRate)
+        ]);
+      }
+
+      process(input) {
+        // Apply anti-aliasing filter
+        const filtered = this.antiAlias.processArray(input);
+
+        // Decimate: take every Mth sample
+        const outLen = Math.floor(filtered.length / this.factor);
+        const out = new Float64Array(outLen);
+        for (let i = 0; i < outLen; i++) {
+          out[i] = filtered[i * this.factor];
+        }
+        return out;
+      }
+
+      reset() {
+        this.antiAlias.reset();
+      }
+    }
+
+    // =========================================================================
     // FILTER STATE
     // =========================================================================
 
     const filterState = {
       enabled: false,
       lockInEnabled: false,
-      sampleRate: 1000,
+      sampleRate: 1000,       // Will be auto-detected from incoming data
+      displayRate: 1000,      // Target rate for chart display
+      decimationFactor: 1,    // sampleRate / displayRate
 
       // Bandpass
       bpFreq: 22,
       bpBandwidth: 10,
-      bpOrder: 4,
+      bpOrder: 6,             // Increased from 4 for steeper rolloff
 
       // Notch
       notchEnabled: true,
       notchFreq: 60,
       notchQ: 35,
-      notchStages: 2,
+      notchStages: 3,         // Increased from 2 for deeper null
       notchHarmonics: false,
 
       // Lock-In
@@ -661,24 +720,31 @@
       // Filter instances
       bandpassFilter: null,
       notchFilter: null,
-      lockInAmp: null
+      lockInAmp: null,
+      decimator: null,
+
+      // Frame overlap buffer for seamless processing
+      overlapBuffer: null,
+      overlapSize: 64          // Samples to overlap between frames
     };
 
     function rebuildFilters() {
-      // Bandpass filter
+      const fs = filterState.sampleRate;
+
+      // Bandpass filter - 6th order for -36dB/octave rolloff
       filterState.bandpassFilter = designButterworthBandpass(
         filterState.bpFreq,
         filterState.bpBandwidth,
-        filterState.sampleRate,
+        fs,
         filterState.bpOrder
       );
 
-      // Notch filter
+      // Notch filter - 3 stages for -60dB null depth
       if (filterState.notchEnabled) {
         filterState.notchFilter = designNotchFilter(
           filterState.notchFreq,
           filterState.notchQ,
-          filterState.sampleRate,
+          fs,
           filterState.notchStages,
           filterState.notchHarmonics
         );
@@ -686,30 +752,54 @@
         filterState.notchFilter = null;
       }
 
-      // Lock-In amplifier
-      if (!filterState.lockInAmp) {
-        filterState.lockInAmp = new LockInAmplifier(
-          filterState.lockInFreq,
-          filterState.lockInTC,
-          filterState.sampleRate
-        );
+      // Lock-In amplifier with 4th-order LP
+      filterState.lockInAmp = new LockInAmplifier(
+        filterState.lockInFreq,
+        filterState.lockInTC,
+        fs
+      );
+
+      // Decimator for high sample rate data
+      if (filterState.decimationFactor > 1) {
+        filterState.decimator = new Decimator(filterState.decimationFactor, fs);
       } else {
-        filterState.lockInAmp.setFrequency(filterState.lockInFreq);
-        filterState.lockInAmp.setTimeConstant(filterState.lockInTC);
+        filterState.decimator = null;
       }
 
       updateFilterInfo();
       drawFrequencyResponse();
     }
 
+    /**
+     * Update sample rate from incoming data
+     * Auto-detects rate based on samples per second
+     */
+    function updateSampleRate(samplesPerFrame, frameIntervalSec) {
+      const detectedRate = Math.round(samplesPerFrame / frameIntervalSec);
+
+      // ADS1256 supported rates
+      const validRates = [1000, 2000, 3750, 7500, 15000, 30000];
+      const nearestRate = validRates.reduce((prev, curr) =>
+        Math.abs(curr - detectedRate) < Math.abs(prev - detectedRate) ? curr : prev
+      );
+
+      if (nearestRate !== filterState.sampleRate) {
+        console.log(`Sample rate changed: ${filterState.sampleRate} → ${nearestRate} Hz`);
+        filterState.sampleRate = nearestRate;
+        filterState.decimationFactor = Math.max(1, Math.floor(nearestRate / filterState.displayRate));
+        rebuildFilters();
+      }
+    }
+
     function applyFilters(samples) {
-      let result = samples;
+      let result = new Float64Array(samples);
 
       // =====================================================================
-      // OPTIMAL SIGNAL CHAIN:
-      // 1. Notch (kill 60Hz powerline)
+      // OPTIMAL SIGNAL CHAIN (all processing at full sample rate):
+      // 1. Notch (kill 60Hz powerline) - must be first for clean signal
       // 2. Bandpass (remove broadband noise - helps lock-in SNR)
       // 3. Lock-In (precision extraction at exact frequency)
+      // 4. Decimate (reduce to display rate if needed)
       // =====================================================================
 
       // STAGE 1: Always apply notch first if enabled (kills 60Hz)
@@ -718,7 +808,6 @@
       }
 
       // STAGE 2: Apply bandpass if standard filtering enabled
-      // Note: bandpass helps lock-in by removing out-of-band noise
       if (filterState.enabled && filterState.bandpassFilter) {
         result = filterState.bandpassFilter.processArray(result);
       }
@@ -726,6 +815,11 @@
       // STAGE 3: Apply lock-in if enabled (final precision extraction)
       if (filterState.lockInEnabled && filterState.lockInAmp) {
         result = filterState.lockInAmp.processArray(result, filterState.lockInOutput);
+      }
+
+      // STAGE 4: Decimate for display if sample rate > display rate
+      if (filterState.decimator && filterState.decimationFactor > 1) {
+        result = filterState.decimator.process(result);
       }
 
       return Array.from(result);
@@ -1074,45 +1168,75 @@
         .then(() => { suppressRelayout = false; });
     }
 
+    // Track frame timing for sample rate detection
+    let lastFrameTime = null;
+    let frameCount = 0;
+
     function appendFrame(msg) {
       if (!plotInitialized) initPlot();
       let geo = msg.geo;
       if (!geo || !geo.length) return;
 
-      const frameLen = geo.length;
-      const dtMs = 1000.0 / SAMPLE_RATE_HZ;  // 1ms per sample at 1kHz
-
-      // Always use browser's current time for accurate wall-clock display
-      // Each frame is 1 second of data, so set start time to (now - 1 second)
+      const inputLen = geo.length;
       const now = Date.now();
-      if (nextTimeMs === null) {
-        nextTimeMs = now - frameLen * dtMs;
-      } else {
-        // Resync to wall clock to prevent drift
-        nextTimeMs = now - frameLen * dtMs;
-      }
 
-      // Apply filters
-      if (filterState.enabled || filterState.lockInEnabled) {
+      // Auto-detect sample rate from incoming data
+      // If we get 4000 samples in 1 second, sample rate is 4kHz
+      if (lastFrameTime !== null) {
+        const frameIntervalSec = (now - lastFrameTime) / 1000;
+        if (frameIntervalSec > 0.5 && frameIntervalSec < 2.0) {
+          // Only update on reasonable intervals (0.5-2 sec frames)
+          if (frameCount % 5 === 0) { // Check every 5 frames to reduce noise
+            updateSampleRate(inputLen, frameIntervalSec);
+          }
+        }
+      }
+      lastFrameTime = now;
+      frameCount++;
+
+      // Apply DSP filters (notch always applied if enabled, even when "filters" off)
+      // This processes at full sample rate, then decimates if needed
+      const needsProcessing = filterState.enabled || filterState.lockInEnabled || filterState.notchEnabled;
+      if (needsProcessing) {
         geo = applyFilters(geo);
       }
 
+      // Output length may differ from input if decimation occurred
+      const outputLen = geo.length;
+
+      // Calculate time step based on effective output rate
+      const effectiveRate = filterState.decimationFactor > 1 ? filterState.displayRate : filterState.sampleRate;
+      const dtMs = 1000.0 / effectiveRate;
+
+      // Always use browser's current time for accurate wall-clock display
+      const frameDurationMs = outputLen * dtMs;
+      nextTimeMs = now - frameDurationMs;
+
       // Generate Date objects for x-axis
-      const xs = new Array(frameLen);
-      for (let i = 0; i < frameLen; i++) {
+      const xs = new Array(outputLen);
+      for (let i = 0; i < outputLen; i++) {
         xs[i] = new Date(nextTimeMs + i * dtMs);
       }
-      nextTimeMs += frameLen * dtMs;
-      lastTimeMs = nextTimeMs - dtMs;
+      lastTimeMs = now;
 
-      Plotly.extendTraces('scope', { x: [xs], y: [geo] }, [0], MAX_POINTS);
+      // Adjust max points for chart buffer based on display rate
+      const effectiveMaxPoints = BUFFER_SECONDS * effectiveRate;
+      Plotly.extendTraces('scope', { x: [xs], y: [geo] }, [0], effectiveMaxPoints);
 
+      // Build status string
       let mode = '';
-      if (filterState.enabled && filterState.lockInEnabled) mode = ' [BP+LI]';
-      else if (filterState.lockInEnabled) mode = ' [LOCK-IN]';
-      else if (filterState.enabled) mode = ' [FILTERED]';
-      else if (filterState.notchEnabled) mode = ' [NOTCH]';
-      viewEl.textContent = `${formatTime(lastTimeMs)}${mode}`;
+      const parts = [];
+      if (filterState.notchEnabled) parts.push('N');
+      if (filterState.enabled) parts.push('BP');
+      if (filterState.lockInEnabled) parts.push('LI');
+      if (parts.length > 0) mode = ` [${parts.join('+')}]`;
+
+      // Show sample rate info
+      const rateInfo = filterState.decimationFactor > 1 ?
+        `${(filterState.sampleRate/1000).toFixed(0)}k→${(filterState.displayRate/1000).toFixed(0)}k` :
+        `${(filterState.sampleRate/1000).toFixed(0)}kHz`;
+
+      viewEl.textContent = `${formatTime(lastTimeMs)} ${rateInfo}${mode}`;
 
       if (followLive) setLiveView();
     }
