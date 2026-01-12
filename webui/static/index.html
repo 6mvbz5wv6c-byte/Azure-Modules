@@ -705,27 +705,27 @@
     function applyFilters(samples) {
       let result = samples;
 
-      // Lock-In mode takes precedence
-      if (filterState.lockInEnabled && filterState.lockInAmp) {
-        // First remove 60Hz if enabled
-        if (filterState.notchEnabled && filterState.notchFilter) {
-          result = filterState.notchFilter.processArray(result);
-        }
-        // Then apply lock-in
-        result = filterState.lockInAmp.processArray(result, filterState.lockInOutput);
-        return Array.from(result);
+      // =====================================================================
+      // OPTIMAL SIGNAL CHAIN:
+      // 1. Notch (kill 60Hz powerline)
+      // 2. Bandpass (remove broadband noise - helps lock-in SNR)
+      // 3. Lock-In (precision extraction at exact frequency)
+      // =====================================================================
+
+      // STAGE 1: Always apply notch first if enabled (kills 60Hz)
+      if (filterState.notchEnabled && filterState.notchFilter) {
+        result = filterState.notchFilter.processArray(result);
       }
 
-      // Standard filter mode
-      if (filterState.enabled) {
-        // Apply notch first (kill 60Hz before anything else)
-        if (filterState.notchEnabled && filterState.notchFilter) {
-          result = filterState.notchFilter.processArray(result);
-        }
-        // Apply bandpass
-        if (filterState.bandpassFilter) {
-          result = filterState.bandpassFilter.processArray(result);
-        }
+      // STAGE 2: Apply bandpass if standard filtering enabled
+      // Note: bandpass helps lock-in by removing out-of-band noise
+      if (filterState.enabled && filterState.bandpassFilter) {
+        result = filterState.bandpassFilter.processArray(result);
+      }
+
+      // STAGE 3: Apply lock-in if enabled (final precision extraction)
+      if (filterState.lockInEnabled && filterState.lockInAmp) {
+        result = filterState.lockInAmp.processArray(result, filterState.lockInOutput);
       }
 
       return Array.from(result);
@@ -736,16 +736,21 @@
       const fHigh = filterState.bpFreq + filterState.bpBandwidth / 2;
 
       let info = '';
+      let parts = [];
+
+      // Build chain description
+      if (filterState.notchEnabled) {
+        parts.push(`Notch:-${filterState.notchStages * 20}dB@${filterState.notchFreq}Hz`);
+      }
+      if (filterState.enabled) {
+        parts.push(`BP:${fLow.toFixed(0)}-${fHigh.toFixed(0)}Hz`);
+      }
       if (filterState.lockInEnabled) {
         const bw = 1 / (2 * Math.PI * filterState.lockInTC);
-        info = `Lock-In: ${filterState.lockInFreq.toFixed(1)}Hz ±${bw.toFixed(2)}Hz`;
-      } else if (filterState.enabled) {
-        info = `BP: ${fLow.toFixed(0)}-${fHigh.toFixed(0)}Hz`;
+        parts.push(`LockIn:${filterState.lockInFreq.toFixed(1)}Hz±${bw.toFixed(1)}Hz`);
       }
 
-      if (filterState.notchEnabled) {
-        info += ` | -${filterState.notchStages * 20}dB@${filterState.notchFreq}Hz`;
-      }
+      info = parts.length > 0 ? parts.join(' → ') : 'No filtering';
 
       document.getElementById('filter-info').textContent = info;
 
@@ -821,53 +826,46 @@
       const simpleControls = document.getElementById('simple-controls');
       const masterStatus = document.getElementById('filter-master-status');
 
-      // Standard filter toggle
-      btnEnable.addEventListener('click', () => {
-        filterState.enabled = !filterState.enabled;
-        filterState.lockInEnabled = false;
-        btnLockin.classList.remove('lockin-active');
+      // Helper to update master status display
+      const updateMasterStatus = () => {
+        const hasBP = filterState.enabled;
+        const hasLI = filterState.lockInEnabled;
+        const hasNotch = filterState.notchEnabled;
 
-        if (filterState.enabled) {
-          btnEnable.textContent = 'Filters ON';
-          btnEnable.classList.add('active');
-          simpleControls.style.display = 'flex';
-          masterStatus.textContent = 'FILTER';
-          masterStatus.className = 'filter-status on';
-          rebuildFilters();
-        } else {
-          btnEnable.textContent = 'Enable Filters';
-          btnEnable.classList.remove('active');
-          if (!filterState.lockInEnabled) {
-            simpleControls.style.display = 'none';
-            masterStatus.textContent = 'OFF';
-            masterStatus.className = 'filter-status off';
-          }
-        }
-        updateFilterInfo();
-      });
+        simpleControls.style.display = (hasBP || hasLI) ? 'flex' : 'none';
+        btnEnable.classList.toggle('active', hasBP);
+        btnEnable.textContent = hasBP ? 'Filters ON' : 'Enable Filters';
+        btnLockin.classList.toggle('lockin-active', hasLI);
+        btnLockin.textContent = hasLI ? 'Lock-In ON' : 'Lock-In Amp';
 
-      // Lock-In toggle
-      btnLockin.addEventListener('click', () => {
-        filterState.lockInEnabled = !filterState.lockInEnabled;
-        filterState.enabled = false;
-        btnEnable.classList.remove('active');
-        btnEnable.textContent = 'Enable Filters';
-
-        if (filterState.lockInEnabled) {
-          btnLockin.textContent = 'Lock-In ON';
-          btnLockin.classList.add('lockin-active');
-          simpleControls.style.display = 'flex';
+        if (hasBP && hasLI) {
+          masterStatus.textContent = 'BP+LI';
+          masterStatus.className = 'filter-status lockin';
+        } else if (hasLI) {
           masterStatus.textContent = 'LOCK-IN';
           masterStatus.className = 'filter-status lockin';
-          rebuildFilters();
+        } else if (hasBP) {
+          masterStatus.textContent = 'FILTER';
+          masterStatus.className = 'filter-status on';
         } else {
-          btnLockin.textContent = 'Lock-In Amp';
-          btnLockin.classList.remove('lockin-active');
-          simpleControls.style.display = 'none';
-          masterStatus.textContent = 'OFF';
-          masterStatus.className = 'filter-status off';
+          masterStatus.textContent = hasNotch ? 'NOTCH' : 'OFF';
+          masterStatus.className = hasNotch ? 'filter-status on' : 'filter-status off';
         }
         updateFilterInfo();
+      };
+
+      // Standard filter toggle (can combine with lock-in)
+      btnEnable.addEventListener('click', () => {
+        filterState.enabled = !filterState.enabled;
+        rebuildFilters();
+        updateMasterStatus();
+      });
+
+      // Lock-In toggle (can combine with bandpass)
+      btnLockin.addEventListener('click', () => {
+        filterState.lockInEnabled = !filterState.lockInEnabled;
+        rebuildFilters();
+        updateMasterStatus();
       });
 
       // Advanced toggle
@@ -1073,7 +1071,11 @@
 
       Plotly.extendTraces('scope', { x: [xs], y: [geo] }, [0], MAX_POINTS);
 
-      const mode = filterState.lockInEnabled ? ' [LOCK-IN]' : (filterState.enabled ? ' [FILTERED]' : '');
+      let mode = '';
+      if (filterState.enabled && filterState.lockInEnabled) mode = ' [BP+LI]';
+      else if (filterState.lockInEnabled) mode = ' [LOCK-IN]';
+      else if (filterState.enabled) mode = ' [FILTERED]';
+      else if (filterState.notchEnabled) mode = ' [NOTCH]';
       viewEl.textContent = `${lastTime.toFixed(1)}s${mode}`;
 
       if (followLive) setLiveView();
