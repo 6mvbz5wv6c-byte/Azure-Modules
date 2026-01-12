@@ -1171,6 +1171,7 @@
     // Track frame timing for sample rate detection
     let lastFrameTime = null;
     let frameCount = 0;
+    let continuousTimeMs = null;  // Tracks continuous time across frames
 
     function appendFrame(msg) {
       if (!plotInitialized) initPlot();
@@ -1181,12 +1182,10 @@
       const now = Date.now();
 
       // Auto-detect sample rate from incoming data
-      // If we get 4000 samples in 1 second, sample rate is 4kHz
       if (lastFrameTime !== null) {
         const frameIntervalSec = (now - lastFrameTime) / 1000;
         if (frameIntervalSec > 0.5 && frameIntervalSec < 2.0) {
-          // Only update on reasonable intervals (0.5-2 sec frames)
-          if (frameCount % 5 === 0) { // Check every 5 frames to reduce noise
+          if (frameCount % 5 === 0) {
             updateSampleRate(inputLen, frameIntervalSec);
           }
         }
@@ -1194,33 +1193,42 @@
       lastFrameTime = now;
       frameCount++;
 
+      // Calculate frame duration based on INPUT samples at INPUT sample rate
+      // This is how long the samples actually represent, regardless of decimation
+      const inputFrameDurationMs = (inputLen / filterState.sampleRate) * 1000;
+
       // Apply DSP filters (notch always applied if enabled, even when "filters" off)
-      // This processes at full sample rate, then decimates if needed
       const needsProcessing = filterState.enabled || filterState.lockInEnabled || filterState.notchEnabled;
       if (needsProcessing) {
         geo = applyFilters(geo);
       }
 
-      // Output length may differ from input if decimation occurred
       const outputLen = geo.length;
 
-      // Calculate time step based on effective output rate
-      const effectiveRate = filterState.decimationFactor > 1 ? filterState.displayRate : filterState.sampleRate;
-      const dtMs = 1000.0 / effectiveRate;
+      // Initialize or resync continuous time if needed
+      // Resync if gap is too large (>2 seconds) indicating reconnection
+      if (continuousTimeMs === null || Math.abs(now - continuousTimeMs) > 2000) {
+        continuousTimeMs = now - inputFrameDurationMs;
+      }
 
-      // Always use browser's current time for accurate wall-clock display
-      const frameDurationMs = outputLen * dtMs;
-      nextTimeMs = now - frameDurationMs;
+      // Calculate time step for OUTPUT samples
+      // The output samples span the same time duration as input, just fewer points
+      const dtMs = inputFrameDurationMs / outputLen;
 
-      // Generate Date objects for x-axis
+      // Generate timestamps starting from continuous time
+      const frameStartMs = continuousTimeMs;
       const xs = new Array(outputLen);
       for (let i = 0; i < outputLen; i++) {
-        xs[i] = new Date(nextTimeMs + i * dtMs);
+        xs[i] = new Date(frameStartMs + i * dtMs);
       }
-      lastTimeMs = now;
+
+      // Advance continuous time by the actual frame duration
+      continuousTimeMs += inputFrameDurationMs;
+      lastTimeMs = continuousTimeMs;
 
       // Adjust max points for chart buffer based on display rate
-      const effectiveMaxPoints = BUFFER_SECONDS * effectiveRate;
+      const effectiveRate = outputLen / (inputFrameDurationMs / 1000);
+      const effectiveMaxPoints = Math.ceil(BUFFER_SECONDS * effectiveRate);
       Plotly.extendTraces('scope', { x: [xs], y: [geo] }, [0], effectiveMaxPoints);
 
       // Build status string
@@ -1233,8 +1241,8 @@
 
       // Show sample rate info
       const rateInfo = filterState.decimationFactor > 1 ?
-        `${(filterState.sampleRate/1000).toFixed(0)}k→${(filterState.displayRate/1000).toFixed(0)}k` :
-        `${(filterState.sampleRate/1000).toFixed(0)}kHz`;
+        `${(filterState.sampleRate/1000).toFixed(1)}k→${(effectiveRate/1000).toFixed(1)}k` :
+        `${(filterState.sampleRate/1000).toFixed(1)}kHz`;
 
       viewEl.textContent = `${formatTime(lastTimeMs)} ${rateInfo}${mode}`;
 
