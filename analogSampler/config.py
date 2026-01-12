@@ -46,7 +46,7 @@ def digital_read(pin):
     return GPIO.input(DRDY_PIN)
 
 def delay_ms(delaytime):
-    time.sleep(delaytime // 1000.0)
+    time.sleep(delaytime / 1000.0)  # Fixed: was // which truncated to 0 for small delays
 
 def spi_writebyte(data):
     SPI.writebytes(data)
