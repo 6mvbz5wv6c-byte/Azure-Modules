@@ -1020,8 +1020,22 @@
     let plotInitialized = false;
     let followLive = true;
     let suppressRelayout = false;
-    let nextTime = null;
-    let lastTime = null;
+    let nextTimeMs = null;  // Epoch milliseconds
+    let lastTimeMs = null;
+
+    // Format milliseconds to HH:MM:SS
+    function formatTime(ms) {
+      const d = new Date(ms);
+      return d.toTimeString().split(' ')[0]; // HH:MM:SS
+    }
+
+    // Format milliseconds to HH:MM:SS.mmm (with milliseconds)
+    function formatTimeMs(ms) {
+      const d = new Date(ms);
+      const hms = d.toTimeString().split(' ')[0];
+      const millis = String(d.getMilliseconds()).padStart(3, '0');
+      return `${hms}.${millis}`;
+    }
 
     function initPlot() {
       Plotly.newPlot('scope', [{
@@ -1029,11 +1043,19 @@
         mode: 'lines',
         line: { width: 1, simplify: false, color: '#00ff88' }
       }], {
-        margin: { l: 55, r: 10, t: 10, b: 25 },
+        margin: { l: 55, r: 10, t: 10, b: 40 },
         paper_bgcolor: '#000',
         plot_bgcolor: '#000',
         showlegend: false,
-        xaxis: { title: 'Time (s)', showgrid: true, gridcolor: '#222', zeroline: false, tickfont: { color: '#888', size: 10 } },
+        xaxis: {
+          title: 'Time',
+          type: 'date',
+          tickformat: '%H:%M:%S',
+          showgrid: true,
+          gridcolor: '#222',
+          zeroline: false,
+          tickfont: { color: '#888', size: 10 }
+        },
         yaxis: { title: 'Counts', showgrid: true, gridcolor: '#222', tickfont: { color: '#888', size: 10 }, autorange: true }
       }, {
         responsive: true, displaylogo: false, modeBarButtonsToRemove: ['select2d', 'lasso2d']
@@ -1044,9 +1066,11 @@
     }
 
     function setLiveView() {
-      if (lastTime == null) return;
+      if (lastTimeMs == null) return;
       suppressRelayout = true;
-      Plotly.relayout('scope', { 'xaxis.range': [lastTime - BUFFER_SECONDS, lastTime] })
+      const rangeStart = new Date(lastTimeMs - BUFFER_SECONDS * 1000);
+      const rangeEnd = new Date(lastTimeMs);
+      Plotly.relayout('scope', { 'xaxis.range': [rangeStart, rangeEnd] })
         .then(() => { suppressRelayout = false; });
     }
 
@@ -1056,18 +1080,31 @@
       if (!geo || !geo.length) return;
 
       const frameLen = geo.length;
-      const dt = 1.0 / SAMPLE_RATE_HZ;
-      if (nextTime === null) nextTime = msg.t0 || 0;
+      const dtMs = 1000.0 / SAMPLE_RATE_HZ;  // 1ms per sample at 1kHz
+
+      // Initialize time from message or use current time
+      if (nextTimeMs === null) {
+        if (msg.t0) {
+          // msg.t0 is epoch seconds, convert to ms
+          nextTimeMs = msg.t0 * 1000;
+        } else {
+          // Use current time
+          nextTimeMs = Date.now();
+        }
+      }
 
       // Apply filters
       if (filterState.enabled || filterState.lockInEnabled) {
         geo = applyFilters(geo);
       }
 
+      // Generate Date objects for x-axis
       const xs = new Array(frameLen);
-      for (let i = 0; i < frameLen; i++) xs[i] = nextTime + i * dt;
-      nextTime += frameLen * dt;
-      lastTime = xs[frameLen - 1];
+      for (let i = 0; i < frameLen; i++) {
+        xs[i] = new Date(nextTimeMs + i * dtMs);
+      }
+      nextTimeMs += frameLen * dtMs;
+      lastTimeMs = nextTimeMs - dtMs;
 
       Plotly.extendTraces('scope', { x: [xs], y: [geo] }, [0], MAX_POINTS);
 
@@ -1076,7 +1113,7 @@
       else if (filterState.lockInEnabled) mode = ' [LOCK-IN]';
       else if (filterState.enabled) mode = ' [FILTERED]';
       else if (filterState.notchEnabled) mode = ' [NOTCH]';
-      viewEl.textContent = `${lastTime.toFixed(1)}s${mode}`;
+      viewEl.textContent = `${formatTime(lastTimeMs)}${mode}`;
 
       if (followLive) setLiveView();
     }
