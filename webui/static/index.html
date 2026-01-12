@@ -1082,15 +1082,14 @@
       const frameLen = geo.length;
       const dtMs = 1000.0 / SAMPLE_RATE_HZ;  // 1ms per sample at 1kHz
 
-      // Initialize time from message or use current time
+      // Always use browser's current time for accurate wall-clock display
+      // Each frame is 1 second of data, so set start time to (now - 1 second)
+      const now = Date.now();
       if (nextTimeMs === null) {
-        if (msg.t0) {
-          // msg.t0 is epoch seconds, convert to ms
-          nextTimeMs = msg.t0 * 1000;
-        } else {
-          // Use current time
-          nextTimeMs = Date.now();
-        }
+        nextTimeMs = now - frameLen * dtMs;
+      } else {
+        // Resync to wall clock to prevent drift
+        nextTimeMs = now - frameLen * dtMs;
       }
 
       // Apply filters
