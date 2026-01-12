@@ -62,8 +62,23 @@ def module_init():
     GPIO.setup(CS_PIN, GPIO.OUT)
     #GPIO.setup(DRDY_PIN, GPIO.IN)
     GPIO.setup(DRDY_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    SPI.max_speed_hz = 20000
+    # ADS1256 supports SCLK up to 1.92 MHz. Use 1.5 MHz for safety margin.
+    # Old value of 20000 (20kHz) was way too slow for high sample rates!
+    SPI.max_speed_hz = 1500000
     SPI.mode = 0b01
     return 0;
+
+
+def wait_drdy_edge(timeout_ms=1000):
+    """
+    Efficient DRDY wait using GPIO edge detection instead of busy-polling.
+    Returns True if DRDY went low, False on timeout.
+    """
+    # If already low, return immediately
+    if GPIO.input(DRDY_PIN) == 0:
+        return True
+    # Wait for falling edge with timeout
+    result = GPIO.wait_for_edge(DRDY_PIN, GPIO.FALLING, timeout=timeout_ms)
+    return result is not None
 
 ### END OF FILE ###

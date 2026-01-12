@@ -98,12 +98,12 @@ class ADS1256:
         return data
         
     def ADS1256_WaitDRDY(self):
-        for i in range(0,400000,1):
-            if(config.digital_read(self.drdy_pin) == 0):
-                
-                break
-        if(i >= 400000):
-            print ("Time Out ...\r\n")
+        """
+        Wait for DRDY to go low, indicating data is ready.
+        Uses efficient GPIO edge detection instead of busy-polling.
+        """
+        if not config.wait_drdy_edge(timeout_ms=1000):
+            print("DRDY Timeout!")
         
      # Old chip ID read function.. Occasionally issues returning the wrong chip ID causing sample loop to fail
      #   def ADS1256_ReadChipID(self):
