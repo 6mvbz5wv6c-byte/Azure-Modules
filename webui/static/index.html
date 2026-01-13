@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Pigboy Geophone Oscilloscope</title>
+  <title>Pigboy Geophone Oscilloscope - Dual Channel</title>
   <style>
     body {
       margin: 0;
@@ -48,6 +48,7 @@
     }
     button:hover { background: #444; }
     button.active { background: #0a5; border-color: #0c7; }
+    button.active-ad630 { background: #a50; border-color: #c70; }
     button.lockin-active { background: #a50; border-color: #c70; }
     #scope {
       border: 1px solid #444;
@@ -75,7 +76,42 @@
       font-size: 14px;
       color: #fff;
     }
-    .panel-toggle { display: flex; gap: 8px; }
+    .panel-toggle { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    /* Channel controls container */
+    .channel-controls {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .channel-box {
+      flex: 1;
+      min-width: 280px;
+      background: #222;
+      border-radius: 6px;
+      padding: 10px;
+      border: 2px solid transparent;
+    }
+    .channel-box.ad620 { border-color: #00ff88; }
+    .channel-box.ad630 { border-color: #ff8800; }
+    .channel-box h4 {
+      margin: 0 0 8px 0;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .channel-box.ad620 h4 { color: #00ff88; }
+    .channel-box.ad630 h4 { color: #ff8800; }
+    .channel-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .channel-box.ad620 .channel-indicator { background: #00ff88; }
+    .channel-box.ad630 .channel-indicator { background: #ff8800; }
 
     .simple-bar {
       display: flex;
@@ -113,6 +149,49 @@
       text-align: center;
     }
 
+    /* Scale slider styling */
+    .scale-slider {
+      width: 100%;
+      margin-top: 6px;
+    }
+    .scale-slider label {
+      font-size: 10px;
+      color: #888;
+    }
+    .scale-slider input[type="range"] {
+      width: 100%;
+      accent-color: #0a5;
+    }
+    .scale-value {
+      font-size: 11px;
+      font-family: monospace;
+      color: #0ff;
+    }
+
+    /* PWM Control */
+    .pwm-control {
+      background: #2a1a00;
+      border: 1px solid #ff8800;
+      border-radius: 6px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .pwm-control h4 {
+      margin: 0 0 8px 0;
+      font-size: 12px;
+      color: #ff8800;
+    }
+    .pwm-control input[type="range"] {
+      accent-color: #ff8800;
+    }
+    .pwm-freq-display {
+      font-size: 24px;
+      font-weight: bold;
+      color: #ff8800;
+      font-family: monospace;
+      text-align: center;
+    }
+
     #advanced-panel {
       display: none;
       background: #181818;
@@ -122,6 +201,42 @@
       margin-top: 10px;
     }
     #advanced-panel.show { display: block; }
+
+    /* Channel tabs for advanced panel */
+    .channel-tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+    .channel-tab {
+      padding: 8px 16px;
+      border-radius: 4px 4px 0 0;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .channel-tab.ad620 {
+      background: #1a3a1a;
+      color: #00ff88;
+      border: 1px solid #00ff88;
+      border-bottom: none;
+    }
+    .channel-tab.ad630 {
+      background: #3a2a00;
+      color: #ff8800;
+      border: 1px solid #ff8800;
+      border-bottom: none;
+    }
+    .channel-tab.active {
+      background: #222;
+    }
+    .channel-tab-content {
+      display: none;
+    }
+    .channel-tab-content.active {
+      display: block;
+    }
+
     .advanced-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -203,7 +318,7 @@
 </head>
 <body>
   <header>
-    <span>Pigboy Geophone Monitor</span>
+    <span>Pigboy Geophone Monitor - Dual Channel</span>
     <span id="status">Connecting...</span>
   </header>
   <div id="container">
@@ -214,21 +329,62 @@
     </div>
     <div id="scope"></div>
 
+    <!-- Channel Display Controls -->
+    <div class="channel-controls">
+      <div class="channel-box ad620">
+        <h4><span class="channel-indicator"></span> AD620 (Instr. Amp) - CH0-CH1</h4>
+        <div class="control-group">
+          <label style="color:#00ff88;font-size:11px;">Show:</label>
+          <button id="btn-ad620-show" class="active">ON</button>
+          <label style="color:#ccc;font-size:11px;margin-left:12px;">DSP:</label>
+          <button id="btn-ad620-filter">Enable</button>
+          <button id="btn-ad620-lockin">Lock-In</button>
+        </div>
+        <div class="scale-slider">
+          <label>Y-Scale: <span id="ad620-scale-val" class="scale-value">Auto</span></label>
+          <input type="range" id="ad620-scale" min="0" max="100" value="0" step="1">
+        </div>
+      </div>
+      <div class="channel-box ad630">
+        <h4><span class="channel-indicator"></span> AD630 (Lock-In Amp) - CH2-CH3</h4>
+        <div class="control-group">
+          <label style="color:#ff8800;font-size:11px;">Show:</label>
+          <button id="btn-ad630-show" class="active-ad630">ON</button>
+          <label style="color:#ccc;font-size:11px;margin-left:12px;">DSP:</label>
+          <button id="btn-ad630-filter">Enable</button>
+          <button id="btn-ad630-lockin">Lock-In</button>
+        </div>
+        <div class="scale-slider">
+          <label>Y-Scale: <span id="ad630-scale-val" class="scale-value">Auto</span></label>
+          <input type="range" id="ad630-scale" min="0" max="100" value="0" step="1">
+        </div>
+      </div>
+    </div>
+
+    <!-- PWM Reference Control for AD630 -->
+    <div class="pwm-control">
+      <h4>AD630 Lock-In Reference PWM (GPIO25)</h4>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="flex:1;">
+          <input type="range" id="pwm-freq" min="21.99" max="22.01" value="22" step="0.0001" style="width:100%;">
+        </div>
+        <div class="pwm-freq-display" id="pwm-freq-display">22.0000 Hz</div>
+      </div>
+      <div class="info-text">Fine-tune the reference frequency for hardware lock-in amplifier. Range: 21.99 - 22.01 Hz (± 0.01 Hz)</div>
+    </div>
+
     <div class="panel" id="filter-panel">
       <div class="panel-header">
-        <h3>Signal Processing
-          <span id="filter-master-status" class="filter-status off">OFF</span>
-        </h3>
+        <h3>Advanced DSP Settings</h3>
         <div class="panel-toggle">
-          <button id="btn-filter-enable">Enable Filters</button>
-          <button id="btn-lockin-enable">Lock-In Amp</button>
-          <button id="btn-advanced-toggle">Advanced</button>
+          <button id="btn-advanced-toggle">Show Advanced</button>
         </div>
       </div>
 
-      <div class="simple-bar" id="simple-controls" style="display: none;">
+      <!-- Quick Controls -->
+      <div class="simple-bar" id="simple-controls">
         <div class="control-group">
-          <label>Freq:</label>
+          <label>Target Freq:</label>
           <button id="freq-down">−</button>
           <span class="big-value" id="freq-display">22</span>
           <span style="color:#888;font-size:12px">Hz</span>
@@ -250,38 +406,178 @@
       </div>
 
       <div id="advanced-panel">
-        <div class="advanced-grid">
-          <!-- Lock-In Amplifier -->
-          <div class="filter-section">
-            <h4>Lock-In Amplifier</h4>
-            <div class="param-row">
-              <label>Reference Freq:</label>
-              <input type="range" id="lockin-freq" min="15" max="30" value="22" step="0.1">
-              <span class="value" id="lockin-freq-val">22.0 Hz</span>
+        <!-- Channel Tabs -->
+        <div class="channel-tabs">
+          <div class="channel-tab ad620 active" data-channel="ad620">AD620 DSP</div>
+          <div class="channel-tab ad630" data-channel="ad630">AD630 DSP</div>
+        </div>
+
+        <!-- AD620 Channel Settings -->
+        <div id="tab-ad620" class="channel-tab-content active">
+          <div class="advanced-grid">
+            <!-- Lock-In Amplifier -->
+            <div class="filter-section">
+              <h4>Lock-In Amplifier (AD620)</h4>
+              <div class="param-row">
+                <label>Reference Freq:</label>
+                <input type="range" id="ad620-lockin-freq" min="15" max="30" value="22" step="0.1">
+                <span class="value" id="ad620-lockin-freq-val">22.0 Hz</span>
+              </div>
+              <div class="param-row">
+                <label>Time Constant:</label>
+                <input type="range" id="ad620-lockin-tc" min="0.01" max="1" value="0.1" step="0.01">
+                <span class="value" id="ad620-lockin-tc-val">100 ms</span>
+              </div>
+              <div class="param-row">
+                <label>Output:</label>
+                <select id="ad620-lockin-output">
+                  <option value="magnitude">Magnitude (R)</option>
+                  <option value="inphase">In-Phase (I)</option>
+                  <option value="quadrature">Quadrature (Q)</option>
+                  <option value="filtered">Filtered Signal</option>
+                </select>
+              </div>
             </div>
-            <div class="param-row">
-              <label>Time Constant:</label>
-              <input type="range" id="lockin-tc" min="0.01" max="1" value="0.1" step="0.01">
-              <span class="value" id="lockin-tc-val">100 ms</span>
+
+            <!-- Bandpass -->
+            <div class="filter-section">
+              <h4>Bandpass Filter (AD620)</h4>
+              <div class="param-row">
+                <label>Center Freq:</label>
+                <input type="range" id="ad620-bp-freq" min="15" max="30" value="22" step="0.5">
+                <span class="value" id="ad620-bp-freq-val">22.0 Hz</span>
+              </div>
+              <div class="param-row">
+                <label>Bandwidth:</label>
+                <input type="range" id="ad620-bp-bandwidth" min="1" max="20" value="10" step="0.5">
+                <span class="value" id="ad620-bp-bandwidth-val">10.0 Hz</span>
+              </div>
+              <div class="param-row">
+                <label>Order:</label>
+                <input type="range" id="ad620-bp-order" min="2" max="8" value="4" step="2">
+                <span class="value" id="ad620-bp-order-val">4</span>
+              </div>
+              <div class="info-text" id="ad620-bp-info">BP: 17-27 Hz, -24dB/oct</div>
+              <canvas id="ad620-bp-response" class="freq-response" width="220" height="50"></canvas>
             </div>
-            <div class="param-row">
-              <label>Output:</label>
-              <select id="lockin-output">
-                <option value="magnitude">Magnitude (R)</option>
-                <option value="inphase">In-Phase (I)</option>
-                <option value="quadrature">Quadrature (Q)</option>
-                <option value="filtered">Filtered Signal</option>
-              </select>
-            </div>
-            <div class="info-text">
-              Lock-in extracts signal at exact reference frequency.
-              Equivalent Q: ∞ (limited only by time constant)
+
+            <!-- 60Hz Notch -->
+            <div class="filter-section">
+              <h4>60 Hz Notch Filter (AD620)</h4>
+              <div class="param-row">
+                <label>Enabled:</label>
+                <input type="checkbox" id="ad620-notch-enabled" checked>
+                <span class="value" id="ad620-notch-status">ON</span>
+              </div>
+              <div class="param-row">
+                <label>Frequency:</label>
+                <input type="range" id="ad620-notch-freq" min="55" max="65" value="60" step="0.1">
+                <span class="value" id="ad620-notch-freq-val">60.0 Hz</span>
+              </div>
+              <div class="param-row">
+                <label>Q Factor:</label>
+                <input type="range" id="ad620-notch-q" min="10" max="100" value="35" step="5">
+                <span class="value" id="ad620-notch-q-val">Q=35</span>
+              </div>
+              <div class="param-row">
+                <label>Depth (stages):</label>
+                <input type="range" id="ad620-notch-order" min="1" max="4" value="2" step="1">
+                <span class="value" id="ad620-notch-order-val">2</span>
+              </div>
+              <div class="param-row">
+                <label>Harmonics:</label>
+                <input type="checkbox" id="ad620-notch-harmonics">
+                <span class="value" id="ad620-harmonics-status">OFF</span>
+              </div>
             </div>
           </div>
+        </div>
 
-          <!-- PGA -->
+        <!-- AD630 Channel Settings -->
+        <div id="tab-ad630" class="channel-tab-content">
+          <div class="advanced-grid">
+            <!-- Lock-In Amplifier -->
+            <div class="filter-section">
+              <h4>Lock-In Amplifier (AD630)</h4>
+              <div class="param-row">
+                <label>Reference Freq:</label>
+                <input type="range" id="ad630-lockin-freq" min="15" max="30" value="22" step="0.1">
+                <span class="value" id="ad630-lockin-freq-val">22.0 Hz</span>
+              </div>
+              <div class="param-row">
+                <label>Time Constant:</label>
+                <input type="range" id="ad630-lockin-tc" min="0.01" max="1" value="0.1" step="0.01">
+                <span class="value" id="ad630-lockin-tc-val">100 ms</span>
+              </div>
+              <div class="param-row">
+                <label>Output:</label>
+                <select id="ad630-lockin-output">
+                  <option value="magnitude">Magnitude (R)</option>
+                  <option value="inphase">In-Phase (I)</option>
+                  <option value="quadrature">Quadrature (Q)</option>
+                  <option value="filtered">Filtered Signal</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Bandpass -->
+            <div class="filter-section">
+              <h4>Bandpass Filter (AD630)</h4>
+              <div class="param-row">
+                <label>Center Freq:</label>
+                <input type="range" id="ad630-bp-freq" min="15" max="30" value="22" step="0.5">
+                <span class="value" id="ad630-bp-freq-val">22.0 Hz</span>
+              </div>
+              <div class="param-row">
+                <label>Bandwidth:</label>
+                <input type="range" id="ad630-bp-bandwidth" min="1" max="20" value="10" step="0.5">
+                <span class="value" id="ad630-bp-bandwidth-val">10.0 Hz</span>
+              </div>
+              <div class="param-row">
+                <label>Order:</label>
+                <input type="range" id="ad630-bp-order" min="2" max="8" value="4" step="2">
+                <span class="value" id="ad630-bp-order-val">4</span>
+              </div>
+              <div class="info-text" id="ad630-bp-info">BP: 17-27 Hz, -24dB/oct</div>
+              <canvas id="ad630-bp-response" class="freq-response" width="220" height="50"></canvas>
+            </div>
+
+            <!-- 60Hz Notch -->
+            <div class="filter-section">
+              <h4>60 Hz Notch Filter (AD630)</h4>
+              <div class="param-row">
+                <label>Enabled:</label>
+                <input type="checkbox" id="ad630-notch-enabled" checked>
+                <span class="value" id="ad630-notch-status">ON</span>
+              </div>
+              <div class="param-row">
+                <label>Frequency:</label>
+                <input type="range" id="ad630-notch-freq" min="55" max="65" value="60" step="0.1">
+                <span class="value" id="ad630-notch-freq-val">60.0 Hz</span>
+              </div>
+              <div class="param-row">
+                <label>Q Factor:</label>
+                <input type="range" id="ad630-notch-q" min="10" max="100" value="35" step="5">
+                <span class="value" id="ad630-notch-q-val">Q=35</span>
+              </div>
+              <div class="param-row">
+                <label>Depth (stages):</label>
+                <input type="range" id="ad630-notch-order" min="1" max="4" value="2" step="1">
+                <span class="value" id="ad630-notch-order-val">2</span>
+              </div>
+              <div class="param-row">
+                <label>Harmonics:</label>
+                <input type="checkbox" id="ad630-notch-harmonics">
+                <span class="value" id="ad630-harmonics-status">OFF</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Shared Settings -->
+        <div class="advanced-grid" style="margin-top:12px;">
           <div class="filter-section">
-            <h4>ADC Gain (PGA)</h4>
+            <h4>ADC Gain (PGA) - Shared</h4>
             <div class="param-row">
               <label>PGA Gain:</label>
               <select id="pga-select">
@@ -295,59 +591,6 @@
               </select>
             </div>
             <div class="info-text">Requires sampler restart to take effect.</div>
-          </div>
-
-          <!-- Bandpass -->
-          <div class="filter-section">
-            <h4>Bandpass Filter</h4>
-            <div class="param-row">
-              <label>Center Freq:</label>
-              <input type="range" id="bp-freq" min="15" max="30" value="22" step="0.5">
-              <span class="value" id="bp-freq-val">22.0 Hz</span>
-            </div>
-            <div class="param-row">
-              <label>Bandwidth:</label>
-              <input type="range" id="bp-bandwidth" min="1" max="20" value="10" step="0.5">
-              <span class="value" id="bp-bandwidth-val">10.0 Hz</span>
-            </div>
-            <div class="param-row">
-              <label>Order:</label>
-              <input type="range" id="bp-order" min="2" max="8" value="4" step="2">
-              <span class="value" id="bp-order-val">4</span>
-            </div>
-            <div class="info-text" id="bp-info">BP: 17-27 Hz, -24dB/oct</div>
-            <canvas id="bp-response" class="freq-response" width="220" height="50"></canvas>
-          </div>
-
-          <!-- 60Hz Notch -->
-          <div class="filter-section">
-            <h4>60 Hz Notch Filter</h4>
-            <div class="param-row">
-              <label>Enabled:</label>
-              <input type="checkbox" id="notch-enabled" checked>
-              <span class="value" id="notch-status">ON</span>
-            </div>
-            <div class="param-row">
-              <label>Frequency:</label>
-              <input type="range" id="notch-freq" min="55" max="65" value="60" step="0.1">
-              <span class="value" id="notch-freq-val">60.0 Hz</span>
-            </div>
-            <div class="param-row">
-              <label>Q Factor:</label>
-              <input type="range" id="notch-q" min="10" max="100" value="35" step="5">
-              <span class="value" id="notch-q-val">Q=35</span>
-            </div>
-            <div class="param-row">
-              <label>Depth (stages):</label>
-              <input type="range" id="notch-order" min="1" max="4" value="2" step="1">
-              <span class="value" id="notch-order-val">2</span>
-            </div>
-            <div class="param-row">
-              <label>Harmonics:</label>
-              <input type="checkbox" id="notch-harmonics">
-              <span class="value" id="harmonics-status">OFF</span>
-            </div>
-            <div class="info-text" id="notch-info">Notch: -40dB @ 60Hz</div>
           </div>
         </div>
       </div>
@@ -386,10 +629,7 @@
     class FilterChain {
       constructor(sections) { this.sections = sections; }
       reset() { this.sections.forEach(s => s.reset()); }
-      process(x) {
-        for (const s of this.sections) x = s.process(x);
-        return x;
-      }
+      process(x) { for (const s of this.sections) x = s.process(x); return x; }
       processArray(input) {
         const out = new Float64Array(input.length);
         for (let i = 0; i < input.length; i++) {
@@ -399,61 +639,28 @@
         }
         return out;
       }
-      magnitudeAt(w) {
-        let m = 1;
-        for (const s of this.sections) m *= s.magnitudeAt(w);
-        return m;
-      }
+      magnitudeAt(w) { let m = 1; for (const s of this.sections) m *= s.magnitudeAt(w); return m; }
     }
 
     // =========================================================================
-    // FILTER DESIGN - Correct Butterworth Implementation
+    // FILTER DESIGN
     // =========================================================================
 
-    /**
-     * Design 2nd-order bandpass filter (peaking EQ style for BP)
-     * Based on Audio EQ Cookbook by Robert Bristow-Johnson
-     */
     function designBP2(fc, Q, fs) {
-      const w0 = 2 * Math.PI * fc / fs;
-      const alpha = Math.sin(w0) / (2 * Q);
-      const cw0 = Math.cos(w0);
-
-      const b0 = alpha;
-      const b1 = 0;
-      const b2 = -alpha;
-      const a0 = 1 + alpha;
-      const a1 = -2 * cw0;
-      const a2 = 1 - alpha;
-
+      const w0 = 2 * Math.PI * fc / fs, alpha = Math.sin(w0) / (2 * Q), cw0 = Math.cos(w0);
+      const b0 = alpha, b1 = 0, b2 = -alpha, a0 = 1 + alpha, a1 = -2 * cw0, a2 = 1 - alpha;
       return new Biquad(b0/a0, b1/a0, b2/a0, a1/a0, a2/a0);
     }
 
-    /**
-     * Design 2nd-order lowpass filter
-     */
     function designLP2(fc, Q, fs) {
-      const w0 = 2 * Math.PI * fc / fs;
-      const alpha = Math.sin(w0) / (2 * Q);
-      const cw0 = Math.cos(w0);
-
-      const b0 = (1 - cw0) / 2;
-      const b1 = 1 - cw0;
-      const b2 = (1 - cw0) / 2;
-      const a0 = 1 + alpha;
-      const a1 = -2 * cw0;
-      const a2 = 1 - alpha;
-
+      const w0 = 2 * Math.PI * fc / fs, alpha = Math.sin(w0) / (2 * Q), cw0 = Math.cos(w0);
+      const b0 = (1 - cw0) / 2, b1 = 1 - cw0, b2 = (1 - cw0) / 2;
+      const a0 = 1 + alpha, a1 = -2 * cw0, a2 = 1 - alpha;
       return new Biquad(b0/a0, b1/a0, b2/a0, a1/a0, a2/a0);
     }
 
-    /**
-     * Design 2nd-order highpass filter
-     */
     function designHP2(fc, Q, fs) {
-      const w0 = 2 * Math.PI * fc / fs;
-      const alpha = Math.sin(w0) / (2 * Q);
-      const cw0 = Math.cos(w0);
+      const w0 = 2 * Math.PI * fc / fs, alpha = Math.sin(w0) / (2 * Q), cw0 = Math.cos(w0);
 
       const b0 = (1 + cw0) / 2;
       const b1 = -(1 + cw0);
@@ -630,183 +837,69 @@
     }
 
     // =========================================================================
-    // FILTER STATE
+    // DUAL CHANNEL FILTER STATE
     // =========================================================================
 
-    const filterState = {
-      enabled: false,
-      lockInEnabled: false,
-      sampleRate: 1000,
-
-      // Bandpass
-      bpFreq: 22,
-      bpBandwidth: 10,
-      bpOrder: 4,
-
-      // Notch
-      notchEnabled: true,
-      notchFreq: 60,
-      notchQ: 35,
-      notchStages: 2,
-      notchHarmonics: false,
-
-      // Lock-In
-      lockInFreq: 22,
-      lockInTC: 0.1,
-      lockInOutput: 'magnitude',
-
-      // PGA
-      pgaGain: 4,
-
-      // Filter instances
-      bandpassFilter: null,
-      notchFilter: null,
-      lockInAmp: null
-    };
-
-    function rebuildFilters() {
-      // Bandpass filter
-      filterState.bandpassFilter = designButterworthBandpass(
-        filterState.bpFreq,
-        filterState.bpBandwidth,
-        filterState.sampleRate,
-        filterState.bpOrder
-      );
-
-      // Notch filter
-      if (filterState.notchEnabled) {
-        filterState.notchFilter = designNotchFilter(
-          filterState.notchFreq,
-          filterState.notchQ,
-          filterState.sampleRate,
-          filterState.notchStages,
-          filterState.notchHarmonics
-        );
-      } else {
-        filterState.notchFilter = null;
-      }
-
-      // Lock-In amplifier
-      if (!filterState.lockInAmp) {
-        filterState.lockInAmp = new LockInAmplifier(
-          filterState.lockInFreq,
-          filterState.lockInTC,
-          filterState.sampleRate
-        );
-      } else {
-        filterState.lockInAmp.setFrequency(filterState.lockInFreq);
-        filterState.lockInAmp.setTimeConstant(filterState.lockInTC);
-      }
-
-      updateFilterInfo();
-      drawFrequencyResponse();
+    function createChannelState() {
+      return {
+        enabled: false, lockInEnabled: false, visible: true,
+        yScaleAuto: true, yScaleMax: 1000000, sampleRate: 1000,
+        bpFreq: 22, bpBandwidth: 10, bpOrder: 4,
+        notchEnabled: true, notchFreq: 60, notchQ: 35, notchStages: 2, notchHarmonics: false,
+        lockInFreq: 22, lockInTC: 0.1, lockInOutput: 'magnitude',
+        bandpassFilter: null, notchFilter: null, lockInAmp: null
+      };
     }
 
-    function applyFilters(samples) {
+    const channelState = { ad620: createChannelState(), ad630: createChannelState() };
+    let pgaGain = 4, pwmFreq = 22.0, ws = null;
+
+    function rebuildFilters(ch) {
+      const s = channelState[ch];
+      s.bandpassFilter = designButterworthBandpass(s.bpFreq, s.bpBandwidth, s.sampleRate, s.bpOrder);
+      s.notchFilter = s.notchEnabled ? designNotchFilter(s.notchFreq, s.notchQ, s.sampleRate, s.notchStages, s.notchHarmonics) : null;
+      if (!s.lockInAmp) s.lockInAmp = new LockInAmplifier(s.lockInFreq, s.lockInTC, s.sampleRate);
+      else { s.lockInAmp.setFrequency(s.lockInFreq); s.lockInAmp.setTimeConstant(s.lockInTC); }
+      drawFrequencyResponse(ch);
+    }
+
+    function applyFilters(samples, ch) {
+      const s = channelState[ch];
       let result = samples;
-
-      // Lock-In mode takes precedence
-      if (filterState.lockInEnabled && filterState.lockInAmp) {
-        // First remove 60Hz if enabled
-        if (filterState.notchEnabled && filterState.notchFilter) {
-          result = filterState.notchFilter.processArray(result);
-        }
-        // Then apply lock-in
-        result = filterState.lockInAmp.processArray(result, filterState.lockInOutput);
-        return Array.from(result);
+      if (s.lockInEnabled && s.lockInAmp) {
+        if (s.notchEnabled && s.notchFilter) result = s.notchFilter.processArray(result);
+        return Array.from(s.lockInAmp.processArray(result, s.lockInOutput));
       }
-
-      // Standard filter mode
-      if (filterState.enabled) {
-        // Apply notch first (kill 60Hz before anything else)
-        if (filterState.notchEnabled && filterState.notchFilter) {
-          result = filterState.notchFilter.processArray(result);
-        }
-        // Apply bandpass
-        if (filterState.bandpassFilter) {
-          result = filterState.bandpassFilter.processArray(result);
-        }
+      if (s.enabled) {
+        if (s.notchEnabled && s.notchFilter) result = s.notchFilter.processArray(result);
+        if (s.bandpassFilter) result = s.bandpassFilter.processArray(result);
       }
-
       return Array.from(result);
     }
 
-    function updateFilterInfo() {
-      const fLow = filterState.bpFreq - filterState.bpBandwidth / 2;
-      const fHigh = filterState.bpFreq + filterState.bpBandwidth / 2;
-
-      let info = '';
-      if (filterState.lockInEnabled) {
-        const bw = 1 / (2 * Math.PI * filterState.lockInTC);
-        info = `Lock-In: ${filterState.lockInFreq.toFixed(1)}Hz ±${bw.toFixed(2)}Hz`;
-      } else if (filterState.enabled) {
-        info = `BP: ${fLow.toFixed(0)}-${fHigh.toFixed(0)}Hz`;
-      }
-
-      if (filterState.notchEnabled) {
-        info += ` | -${filterState.notchStages * 20}dB@${filterState.notchFreq}Hz`;
-      }
-
-      document.getElementById('filter-info').textContent = info;
-
-      // Detailed info
-      const rolloff = filterState.bpOrder * 6;
-      document.getElementById('bp-info').textContent =
-        `BP: ${fLow.toFixed(1)}-${fHigh.toFixed(1)} Hz, -${rolloff}dB/oct`;
-
-      document.getElementById('notch-info').textContent =
-        `Notch: -${filterState.notchStages * 20}dB @ ${filterState.notchFreq}Hz` +
-        (filterState.notchHarmonics ? ' +harmonics' : '');
-    }
-
-    function drawFrequencyResponse() {
-      const canvas = document.getElementById('bp-response');
+    function drawFrequencyResponse(ch) {
+      const canvas = document.getElementById(`${ch}-bp-response`);
       if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      const w = canvas.width, h = canvas.height;
-
-      ctx.fillStyle = '#111';
-      ctx.fillRect(0, 0, w, h);
-
-      if (!filterState.bandpassFilter && !filterState.notchFilter) return;
-
-      ctx.strokeStyle = '#0f0';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-
-      const fs = filterState.sampleRate;
-      const minF = 1, maxF = fs / 2;
-
+      const ctx = canvas.getContext('2d'), w = canvas.width, h = canvas.height, s = channelState[ch];
+      ctx.fillStyle = '#111'; ctx.fillRect(0, 0, w, h);
+      if (!s.bandpassFilter && !s.notchFilter) return;
+      ctx.strokeStyle = ch === 'ad620' ? '#0f0' : '#f80'; ctx.lineWidth = 1; ctx.beginPath();
+      const fs = s.sampleRate, minF = 1, maxF = fs / 2;
       for (let px = 0; px < w; px++) {
-        const freq = minF * Math.pow(maxF / minF, px / w);
-        const omega = 2 * Math.PI * freq / fs;
-
+        const freq = minF * Math.pow(maxF / minF, px / w), omega = 2 * Math.PI * freq / fs;
         let mag = 1;
-        if (filterState.bandpassFilter) mag *= filterState.bandpassFilter.magnitudeAt(omega);
-        if (filterState.notchFilter) mag *= filterState.notchFilter.magnitudeAt(omega);
-
-        const dB = Math.max(-60, 20 * Math.log10(mag + 1e-10));
-        const y = h - ((dB + 60) / 60) * h;
-
-        if (px === 0) ctx.moveTo(px, y);
-        else ctx.lineTo(px, y);
+        if (s.bandpassFilter) mag *= s.bandpassFilter.magnitudeAt(omega);
+        if (s.notchFilter) mag *= s.notchFilter.magnitudeAt(omega);
+        const dB = Math.max(-60, 20 * Math.log10(mag + 1e-10)), y = h - ((dB + 60) / 60) * h;
+        if (px === 0) ctx.moveTo(px, y); else ctx.lineTo(px, y);
       }
       ctx.stroke();
-
-      // Markers
       const drawMarker = (freq, color) => {
         const px = w * Math.log(freq / minF) / Math.log(maxF / minF);
-        ctx.strokeStyle = color;
-        ctx.setLineDash([2, 2]);
-        ctx.beginPath();
-        ctx.moveTo(px, 0);
-        ctx.lineTo(px, h);
-        ctx.stroke();
-        ctx.setLineDash([]);
+        ctx.strokeStyle = color; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke(); ctx.setLineDash([]);
       };
-
-      drawMarker(filterState.bpFreq, '#ff0');
-      if (filterState.notchEnabled) drawMarker(filterState.notchFreq, '#f00');
+      drawMarker(s.bpFreq, '#ff0');
+      if (s.notchEnabled) drawMarker(s.notchFreq, '#f00');
     }
 
     // =========================================================================
@@ -814,60 +907,18 @@
     // =========================================================================
 
     const PGA_VALUES = [1, 2, 4, 8, 16, 32, 64];
+    const SCALE_VALUES = [0, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000];
 
     function initFilterControls() {
-      const btnEnable = document.getElementById('btn-filter-enable');
-      const btnLockin = document.getElementById('btn-lockin-enable');
-      const simpleControls = document.getElementById('simple-controls');
-      const masterStatus = document.getElementById('filter-master-status');
-
-      // Standard filter toggle
-      btnEnable.addEventListener('click', () => {
-        filterState.enabled = !filterState.enabled;
-        filterState.lockInEnabled = false;
-        btnLockin.classList.remove('lockin-active');
-
-        if (filterState.enabled) {
-          btnEnable.textContent = 'Filters ON';
-          btnEnable.classList.add('active');
-          simpleControls.style.display = 'flex';
-          masterStatus.textContent = 'FILTER';
-          masterStatus.className = 'filter-status on';
-          rebuildFilters();
-        } else {
-          btnEnable.textContent = 'Enable Filters';
-          btnEnable.classList.remove('active');
-          if (!filterState.lockInEnabled) {
-            simpleControls.style.display = 'none';
-            masterStatus.textContent = 'OFF';
-            masterStatus.className = 'filter-status off';
-          }
-        }
-        updateFilterInfo();
-      });
-
-      // Lock-In toggle
-      btnLockin.addEventListener('click', () => {
-        filterState.lockInEnabled = !filterState.lockInEnabled;
-        filterState.enabled = false;
-        btnEnable.classList.remove('active');
-        btnEnable.textContent = 'Enable Filters';
-
-        if (filterState.lockInEnabled) {
-          btnLockin.textContent = 'Lock-In ON';
-          btnLockin.classList.add('lockin-active');
-          simpleControls.style.display = 'flex';
-          masterStatus.textContent = 'LOCK-IN';
-          masterStatus.className = 'filter-status lockin';
-          rebuildFilters();
-        } else {
-          btnLockin.textContent = 'Lock-In Amp';
-          btnLockin.classList.remove('lockin-active');
-          simpleControls.style.display = 'none';
-          masterStatus.textContent = 'OFF';
-          masterStatus.className = 'filter-status off';
-        }
-        updateFilterInfo();
+      // Channel tabs
+      document.querySelectorAll('.channel-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          const ch = tab.dataset.channel;
+          document.querySelectorAll('.channel-tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.channel-tab-content').forEach(c => c.classList.remove('active'));
+          tab.classList.add('active');
+          document.getElementById(`tab-${ch}`).classList.add('active');
+        });
       });
 
       // Advanced toggle
@@ -875,216 +926,264 @@
       const advancedPanel = document.getElementById('advanced-panel');
       btnAdvanced.addEventListener('click', () => {
         advancedPanel.classList.toggle('show');
-        btnAdvanced.textContent = advancedPanel.classList.contains('show') ? 'Hide' : 'Advanced';
-        if (advancedPanel.classList.contains('show')) drawFrequencyResponse();
+        btnAdvanced.textContent = advancedPanel.classList.contains('show') ? 'Hide Advanced' : 'Show Advanced';
+        if (advancedPanel.classList.contains('show')) { drawFrequencyResponse('ad620'); drawFrequencyResponse('ad630'); }
       });
 
-      // Simple freq controls
+      // Per-channel controls
+      ['ad620', 'ad630'].forEach(ch => {
+        const s = channelState[ch], activeClass = ch === 'ad620' ? 'active' : 'active-ad630';
+
+        // Show/hide toggle
+        const btnShow = document.getElementById(`btn-${ch}-show`);
+        btnShow.addEventListener('click', () => {
+          s.visible = !s.visible;
+          btnShow.textContent = s.visible ? 'ON' : 'OFF';
+          btnShow.classList.toggle(activeClass, s.visible);
+          updatePlotVisibility();
+        });
+
+        // Filter enable
+        const btnFilter = document.getElementById(`btn-${ch}-filter`);
+        btnFilter.addEventListener('click', () => {
+          s.enabled = !s.enabled; s.lockInEnabled = false;
+          document.getElementById(`btn-${ch}-lockin`).classList.remove('lockin-active');
+          btnFilter.classList.toggle('active', s.enabled);
+          btnFilter.textContent = s.enabled ? 'DSP ON' : 'Enable';
+          rebuildFilters(ch);
+        });
+
+        // Lock-in enable
+        const btnLockin = document.getElementById(`btn-${ch}-lockin`);
+        btnLockin.addEventListener('click', () => {
+          s.lockInEnabled = !s.lockInEnabled; s.enabled = false;
+          btnFilter.classList.remove('active'); btnFilter.textContent = 'Enable';
+          btnLockin.classList.toggle('lockin-active', s.lockInEnabled);
+          btnLockin.textContent = s.lockInEnabled ? 'Lock-In ON' : 'Lock-In';
+          rebuildFilters(ch);
+        });
+
+        // Y-Scale slider
+        const scaleSlider = document.getElementById(`${ch}-scale`), scaleVal = document.getElementById(`${ch}-scale-val`);
+        scaleSlider.addEventListener('input', (e) => {
+          const idx = parseInt(e.target.value);
+          if (idx === 0) { s.yScaleAuto = true; scaleVal.textContent = 'Auto'; }
+          else { s.yScaleAuto = false; s.yScaleMax = SCALE_VALUES[idx]; scaleVal.textContent = s.yScaleMax.toLocaleString(); }
+          updateYAxis();
+        });
+
+        // Lock-in controls
+        document.getElementById(`${ch}-lockin-freq`).addEventListener('input', (e) => {
+          s.lockInFreq = parseFloat(e.target.value);
+          document.getElementById(`${ch}-lockin-freq-val`).textContent = s.lockInFreq.toFixed(1) + ' Hz';
+          rebuildFilters(ch);
+        });
+        document.getElementById(`${ch}-lockin-tc`).addEventListener('input', (e) => {
+          s.lockInTC = parseFloat(e.target.value);
+          document.getElementById(`${ch}-lockin-tc-val`).textContent = (s.lockInTC * 1000).toFixed(0) + ' ms';
+          rebuildFilters(ch);
+        });
+        document.getElementById(`${ch}-lockin-output`).addEventListener('change', (e) => { s.lockInOutput = e.target.value; });
+
+        // Bandpass controls
+        document.getElementById(`${ch}-bp-freq`).addEventListener('input', (e) => {
+          s.bpFreq = parseFloat(e.target.value);
+          document.getElementById(`${ch}-bp-freq-val`).textContent = s.bpFreq.toFixed(1) + ' Hz';
+          document.getElementById(`${ch}-bp-info`).textContent = `BP: ${(s.bpFreq - s.bpBandwidth/2).toFixed(0)}-${(s.bpFreq + s.bpBandwidth/2).toFixed(0)} Hz`;
+          rebuildFilters(ch);
+        });
+        document.getElementById(`${ch}-bp-bandwidth`).addEventListener('input', (e) => {
+          s.bpBandwidth = parseFloat(e.target.value);
+          document.getElementById(`${ch}-bp-bandwidth-val`).textContent = s.bpBandwidth.toFixed(1) + ' Hz';
+          rebuildFilters(ch);
+        });
+        document.getElementById(`${ch}-bp-order`).addEventListener('input', (e) => {
+          s.bpOrder = parseInt(e.target.value);
+          document.getElementById(`${ch}-bp-order-val`).textContent = s.bpOrder;
+          rebuildFilters(ch);
+        });
+
+        // Notch controls
+        document.getElementById(`${ch}-notch-enabled`).addEventListener('change', (e) => {
+          s.notchEnabled = e.target.checked;
+          document.getElementById(`${ch}-notch-status`).textContent = s.notchEnabled ? 'ON' : 'OFF';
+          rebuildFilters(ch);
+        });
+        document.getElementById(`${ch}-notch-freq`).addEventListener('input', (e) => {
+          s.notchFreq = parseFloat(e.target.value);
+          document.getElementById(`${ch}-notch-freq-val`).textContent = s.notchFreq.toFixed(1) + ' Hz';
+          rebuildFilters(ch);
+        });
+        document.getElementById(`${ch}-notch-q`).addEventListener('input', (e) => {
+          s.notchQ = parseFloat(e.target.value);
+          document.getElementById(`${ch}-notch-q-val`).textContent = 'Q=' + s.notchQ;
+          rebuildFilters(ch);
+        });
+        document.getElementById(`${ch}-notch-order`).addEventListener('input', (e) => {
+          s.notchStages = parseInt(e.target.value);
+          document.getElementById(`${ch}-notch-order-val`).textContent = s.notchStages;
+          rebuildFilters(ch);
+        });
+        document.getElementById(`${ch}-notch-harmonics`).addEventListener('change', (e) => {
+          s.notchHarmonics = e.target.checked;
+          document.getElementById(`${ch}-harmonics-status`).textContent = s.notchHarmonics ? 'ON' : 'OFF';
+          rebuildFilters(ch);
+        });
+
+        rebuildFilters(ch);
+      });
+
+      // Quick freq controls (updates both channels)
       const freqDisplay = document.getElementById('freq-display');
-      const bpFreqSlider = document.getElementById('bp-freq');
-      const lockinFreqSlider = document.getElementById('lockin-freq');
-
       const updateFreq = (delta) => {
-        filterState.bpFreq = Math.max(15, Math.min(30, filterState.bpFreq + delta));
-        filterState.lockInFreq = filterState.bpFreq;
-        freqDisplay.textContent = filterState.bpFreq;
-        bpFreqSlider.value = filterState.bpFreq;
-        lockinFreqSlider.value = filterState.lockInFreq;
-        document.getElementById('bp-freq-val').textContent = filterState.bpFreq.toFixed(1) + ' Hz';
-        document.getElementById('lockin-freq-val').textContent = filterState.lockInFreq.toFixed(1) + ' Hz';
-        rebuildFilters();
+        ['ad620', 'ad630'].forEach(ch => {
+          channelState[ch].bpFreq = Math.max(15, Math.min(30, channelState[ch].bpFreq + delta));
+          channelState[ch].lockInFreq = channelState[ch].bpFreq;
+          document.getElementById(`${ch}-bp-freq`).value = channelState[ch].bpFreq;
+          document.getElementById(`${ch}-bp-freq-val`).textContent = channelState[ch].bpFreq.toFixed(1) + ' Hz';
+          document.getElementById(`${ch}-lockin-freq`).value = channelState[ch].lockInFreq;
+          document.getElementById(`${ch}-lockin-freq-val`).textContent = channelState[ch].lockInFreq.toFixed(1) + ' Hz';
+          rebuildFilters(ch);
+        });
+        freqDisplay.textContent = channelState.ad620.bpFreq;
       };
-
       document.getElementById('freq-down').addEventListener('click', () => updateFreq(-1));
       document.getElementById('freq-up').addEventListener('click', () => updateFreq(1));
 
-      // 60Hz toggle
+      // 60Hz toggle (updates both)
       const btn60hz = document.getElementById('btn-60hz-toggle');
       btn60hz.addEventListener('click', () => {
-        filterState.notchEnabled = !filterState.notchEnabled;
-        btn60hz.textContent = filterState.notchEnabled ? 'ON' : 'OFF';
-        btn60hz.classList.toggle('active', filterState.notchEnabled);
-        document.getElementById('notch-enabled').checked = filterState.notchEnabled;
-        document.getElementById('notch-status').textContent = filterState.notchEnabled ? 'ON' : 'OFF';
-        rebuildFilters();
+        const newState = !channelState.ad620.notchEnabled;
+        ['ad620', 'ad630'].forEach(ch => {
+          channelState[ch].notchEnabled = newState;
+          document.getElementById(`${ch}-notch-enabled`).checked = newState;
+          document.getElementById(`${ch}-notch-status`).textContent = newState ? 'ON' : 'OFF';
+          rebuildFilters(ch);
+        });
+        btn60hz.textContent = newState ? 'ON' : 'OFF';
+        btn60hz.classList.toggle('active', newState);
       });
 
       // PGA controls
-      const pgaDisplay = document.getElementById('pga-display');
-      const pgaSelect = document.getElementById('pga-select');
-      const updatePga = () => {
-        pgaDisplay.textContent = filterState.pgaGain + 'x';
-        pgaSelect.value = filterState.pgaGain;
-      };
+      const pgaDisplay = document.getElementById('pga-display'), pgaSelect = document.getElementById('pga-select');
+      const updatePga = () => { pgaDisplay.textContent = pgaGain + 'x'; pgaSelect.value = pgaGain; };
+      document.getElementById('pga-down').addEventListener('click', () => { const idx = PGA_VALUES.indexOf(pgaGain); if (idx > 0) { pgaGain = PGA_VALUES[idx - 1]; updatePga(); } });
+      document.getElementById('pga-up').addEventListener('click', () => { const idx = PGA_VALUES.indexOf(pgaGain); if (idx < PGA_VALUES.length - 1) { pgaGain = PGA_VALUES[idx + 1]; updatePga(); } });
+      pgaSelect.addEventListener('change', (e) => { pgaGain = parseInt(e.target.value); updatePga(); });
 
-      document.getElementById('pga-down').addEventListener('click', () => {
-        const idx = PGA_VALUES.indexOf(filterState.pgaGain);
-        if (idx > 0) { filterState.pgaGain = PGA_VALUES[idx - 1]; updatePga(); }
+      // PWM frequency control
+      const pwmSlider = document.getElementById('pwm-freq'), pwmDisplay = document.getElementById('pwm-freq-display');
+      pwmSlider.addEventListener('input', (e) => {
+        pwmFreq = parseFloat(e.target.value);
+        pwmDisplay.textContent = pwmFreq.toFixed(4) + ' Hz';
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'set_pwm_freq', freq: pwmFreq }));
       });
-      document.getElementById('pga-up').addEventListener('click', () => {
-        const idx = PGA_VALUES.indexOf(filterState.pgaGain);
-        if (idx < PGA_VALUES.length - 1) { filterState.pgaGain = PGA_VALUES[idx + 1]; updatePga(); }
-      });
-      pgaSelect.addEventListener('change', (e) => { filterState.pgaGain = parseInt(e.target.value); updatePga(); });
-
-      // Lock-In controls
-      lockinFreqSlider.addEventListener('input', (e) => {
-        filterState.lockInFreq = parseFloat(e.target.value);
-        filterState.bpFreq = filterState.lockInFreq;
-        document.getElementById('lockin-freq-val').textContent = filterState.lockInFreq.toFixed(1) + ' Hz';
-        freqDisplay.textContent = Math.round(filterState.lockInFreq);
-        bpFreqSlider.value = filterState.bpFreq;
-        document.getElementById('bp-freq-val').textContent = filterState.bpFreq.toFixed(1) + ' Hz';
-        rebuildFilters();
-      });
-
-      document.getElementById('lockin-tc').addEventListener('input', (e) => {
-        filterState.lockInTC = parseFloat(e.target.value);
-        document.getElementById('lockin-tc-val').textContent = (filterState.lockInTC * 1000).toFixed(0) + ' ms';
-        rebuildFilters();
-      });
-
-      document.getElementById('lockin-output').addEventListener('change', (e) => {
-        filterState.lockInOutput = e.target.value;
-      });
-
-      // Bandpass controls
-      bpFreqSlider.addEventListener('input', (e) => {
-        filterState.bpFreq = parseFloat(e.target.value);
-        filterState.lockInFreq = filterState.bpFreq;
-        document.getElementById('bp-freq-val').textContent = filterState.bpFreq.toFixed(1) + ' Hz';
-        freqDisplay.textContent = Math.round(filterState.bpFreq);
-        lockinFreqSlider.value = filterState.lockInFreq;
-        document.getElementById('lockin-freq-val').textContent = filterState.lockInFreq.toFixed(1) + ' Hz';
-        rebuildFilters();
-      });
-
-      document.getElementById('bp-bandwidth').addEventListener('input', (e) => {
-        filterState.bpBandwidth = parseFloat(e.target.value);
-        document.getElementById('bp-bandwidth-val').textContent = filterState.bpBandwidth.toFixed(1) + ' Hz';
-        rebuildFilters();
-      });
-
-      document.getElementById('bp-order').addEventListener('input', (e) => {
-        filterState.bpOrder = parseInt(e.target.value);
-        document.getElementById('bp-order-val').textContent = filterState.bpOrder;
-        rebuildFilters();
-      });
-
-      // Notch controls
-      document.getElementById('notch-enabled').addEventListener('change', (e) => {
-        filterState.notchEnabled = e.target.checked;
-        document.getElementById('notch-status').textContent = filterState.notchEnabled ? 'ON' : 'OFF';
-        btn60hz.textContent = filterState.notchEnabled ? 'ON' : 'OFF';
-        btn60hz.classList.toggle('active', filterState.notchEnabled);
-        rebuildFilters();
-      });
-
-      document.getElementById('notch-freq').addEventListener('input', (e) => {
-        filterState.notchFreq = parseFloat(e.target.value);
-        document.getElementById('notch-freq-val').textContent = filterState.notchFreq.toFixed(1) + ' Hz';
-        rebuildFilters();
-      });
-
-      document.getElementById('notch-q').addEventListener('input', (e) => {
-        filterState.notchQ = parseFloat(e.target.value);
-        document.getElementById('notch-q-val').textContent = 'Q=' + filterState.notchQ;
-        rebuildFilters();
-      });
-
-      document.getElementById('notch-order').addEventListener('input', (e) => {
-        filterState.notchStages = parseInt(e.target.value);
-        document.getElementById('notch-order-val').textContent = filterState.notchStages;
-        rebuildFilters();
-      });
-
-      document.getElementById('notch-harmonics').addEventListener('change', (e) => {
-        filterState.notchHarmonics = e.target.checked;
-        document.getElementById('harmonics-status').textContent = filterState.notchHarmonics ? 'ON' : 'OFF';
-        rebuildFilters();
-      });
-
-      rebuildFilters();
     }
 
     // =========================================================================
     // CHART & WEBSOCKET
     // =========================================================================
 
-    const statusEl = document.getElementById('status');
-    const viewEl = document.getElementById('view');
-    const followBtn = document.getElementById('follow');
-
-    const BUFFER_SECONDS = 45;
-    const SAMPLE_RATE_HZ = 1000;
-    const MAX_POINTS = BUFFER_SECONDS * SAMPLE_RATE_HZ;
-
-    let plotInitialized = false;
-    let followLive = true;
-    let suppressRelayout = false;
-    let nextTime = null;
-    let lastTime = null;
+    const statusEl = document.getElementById('status'), viewEl = document.getElementById('view'), followBtn = document.getElementById('follow');
+    const BUFFER_SECONDS = 45, SAMPLE_RATE_HZ = 1000, MAX_POINTS = BUFFER_SECONDS * SAMPLE_RATE_HZ;
+    let plotInitialized = false, followLive = true, suppressRelayout = false, nextTime = null, lastTime = null;
 
     function initPlot() {
-      Plotly.newPlot('scope', [{
-        x: [], y: [],
-        mode: 'lines',
-        line: { width: 1, simplify: false, color: '#00ff88' }
-      }], {
-        margin: { l: 55, r: 10, t: 10, b: 25 },
-        paper_bgcolor: '#000',
-        plot_bgcolor: '#000',
-        showlegend: false,
+      Plotly.newPlot('scope', [
+        { x: [], y: [], mode: 'lines', name: 'AD620', line: { width: 1, simplify: false, color: '#00ff88' } },
+        { x: [], y: [], mode: 'lines', name: 'AD630', line: { width: 1, simplify: false, color: '#ff8800' } }
+      ], {
+        margin: { l: 55, r: 10, t: 10, b: 25 }, paper_bgcolor: '#000', plot_bgcolor: '#000', showlegend: true,
+        legend: { x: 0.01, y: 0.99, bgcolor: 'rgba(0,0,0,0.5)', font: { color: '#fff', size: 10 } },
         xaxis: { title: 'Time (s)', showgrid: true, gridcolor: '#222', zeroline: false, tickfont: { color: '#888', size: 10 } },
         yaxis: { title: 'Counts', showgrid: true, gridcolor: '#222', tickfont: { color: '#888', size: 10 }, autorange: true }
-      }, {
-        responsive: true, displaylogo: false, modeBarButtonsToRemove: ['select2d', 'lasso2d']
-      }).then((gd) => {
-        gd.on('plotly_relayout', () => { if (!suppressRelayout) followLive = false; });
-      });
+      }, { responsive: true, displaylogo: false, modeBarButtonsToRemove: ['select2d', 'lasso2d'] })
+      .then((gd) => { gd.on('plotly_relayout', () => { if (!suppressRelayout) followLive = false; }); });
       plotInitialized = true;
+    }
+
+    function updatePlotVisibility() {
+      if (!plotInitialized) return;
+      Plotly.restyle('scope', { visible: channelState.ad620.visible }, [0]);
+      Plotly.restyle('scope', { visible: channelState.ad630.visible }, [1]);
+    }
+
+    function updateYAxis() {
+      if (!plotInitialized) return;
+      const a = channelState.ad620, b = channelState.ad630;
+      if (a.yScaleAuto && b.yScaleAuto) { Plotly.relayout('scope', { 'yaxis.autorange': true }); }
+      else {
+        let maxScale = 0;
+        if (!a.yScaleAuto && a.visible) maxScale = Math.max(maxScale, a.yScaleMax);
+        if (!b.yScaleAuto && b.visible) maxScale = Math.max(maxScale, b.yScaleMax);
+        if (maxScale > 0) Plotly.relayout('scope', { 'yaxis.autorange': false, 'yaxis.range': [-maxScale, maxScale] });
+      }
     }
 
     function setLiveView() {
       if (lastTime == null) return;
       suppressRelayout = true;
-      Plotly.relayout('scope', { 'xaxis.range': [lastTime - BUFFER_SECONDS, lastTime] })
-        .then(() => { suppressRelayout = false; });
+      Plotly.relayout('scope', { 'xaxis.range': [lastTime - BUFFER_SECONDS, lastTime] }).then(() => { suppressRelayout = false; });
     }
 
     function appendFrame(msg) {
       if (!plotInitialized) initPlot();
-      let geo = msg.geo;
-      if (!geo || !geo.length) return;
-
-      const frameLen = geo.length;
-      const dt = 1.0 / SAMPLE_RATE_HZ;
-      if (nextTime === null) nextTime = msg.t0 || 0;
-
-      // Apply filters
-      if (filterState.enabled || filterState.lockInEnabled) {
-        geo = applyFilters(geo);
+      if (msg.type === 'pwm_freq_update') {
+        pwmFreq = msg.freq;
+        document.getElementById('pwm-freq').value = pwmFreq;
+        document.getElementById('pwm-freq-display').textContent = pwmFreq.toFixed(4) + ' Hz';
+        return;
       }
 
-      const xs = new Array(frameLen);
-      for (let i = 0; i < frameLen; i++) xs[i] = nextTime + i * dt;
-      nextTime += frameLen * dt;
-      lastTime = xs[frameLen - 1];
+      // Handle version 2 (dual channel)
+      if (msg.version === 2) {
+        const ad620Data = msg.ad620, ad630Data = msg.ad630;
+        if (!ad620Data || !ad630Data) return;
+        const frameLen = ad620Data.length, dt = 1.0 / SAMPLE_RATE_HZ;
+        if (nextTime === null) nextTime = msg.t0 || 0;
 
-      Plotly.extendTraces('scope', { x: [xs], y: [geo] }, [0], MAX_POINTS);
+        let filtered620 = (channelState.ad620.enabled || channelState.ad620.lockInEnabled) ? applyFilters(ad620Data, 'ad620') : ad620Data;
+        let filtered630 = (channelState.ad630.enabled || channelState.ad630.lockInEnabled) ? applyFilters(ad630Data, 'ad630') : ad630Data;
 
-      const mode = filterState.lockInEnabled ? ' [LOCK-IN]' : (filterState.enabled ? ' [FILTERED]' : '');
-      viewEl.textContent = `${lastTime.toFixed(1)}s${mode}`;
+        const xs = new Array(frameLen);
+        for (let i = 0; i < frameLen; i++) xs[i] = nextTime + i * dt;
+        nextTime += frameLen * dt;
+        lastTime = xs[frameLen - 1];
 
-      if (followLive) setLiveView();
+        Plotly.extendTraces('scope', { x: [xs, xs], y: [filtered620, filtered630] }, [0, 1], MAX_POINTS);
+
+        let mode = '';
+        if (channelState.ad620.lockInEnabled) mode += ' [620:LIA]';
+        else if (channelState.ad620.enabled) mode += ' [620:DSP]';
+        if (channelState.ad630.lockInEnabled) mode += ' [630:LIA]';
+        else if (channelState.ad630.enabled) mode += ' [630:DSP]';
+        viewEl.textContent = `${lastTime.toFixed(1)}s${mode}`;
+        if (followLive) setLiveView();
+      }
+      // Handle version 1 (single channel, backward compatible)
+      else if (msg.geo) {
+        const geo = msg.geo;
+        if (!geo || !geo.length) return;
+        const frameLen = geo.length, dt = 1.0 / SAMPLE_RATE_HZ;
+        if (nextTime === null) nextTime = msg.t0 || 0;
+
+        let filtered = (channelState.ad620.enabled || channelState.ad620.lockInEnabled) ? applyFilters(geo, 'ad620') : geo;
+        const xs = new Array(frameLen);
+        for (let i = 0; i < frameLen; i++) xs[i] = nextTime + i * dt;
+        nextTime += frameLen * dt;
+        lastTime = xs[frameLen - 1];
+
+        Plotly.extendTraces('scope', { x: [xs], y: [filtered] }, [0], MAX_POINTS);
+        viewEl.textContent = `${lastTime.toFixed(1)}s (v1)`;
+        if (followLive) setLiveView();
+      }
     }
 
     followBtn.addEventListener('click', () => { followLive = true; setLiveView(); });
 
     function connectWS() {
-      const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
       statusEl.textContent = 'Connecting...'; statusEl.style.color = '#f80';
-
       ws.onopen = () => { statusEl.textContent = 'Connected'; statusEl.style.color = '#0f0'; };
       ws.onclose = () => { statusEl.textContent = 'Reconnecting...'; statusEl.style.color = '#f80'; setTimeout(connectWS, 2000); };
       ws.onerror = () => { statusEl.textContent = 'Error'; statusEl.style.color = '#f00'; };
