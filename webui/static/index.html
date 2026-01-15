@@ -191,6 +191,11 @@
       color: #666;
       margin-top: 4px;
     }
+    .hint-text {
+      font-size: 10px;
+      color: #888;
+      margin-top: 4px;
+    }
     .freq-response {
       height: 50px;
       background: #111;
@@ -317,6 +322,84 @@
             </div>
             <div class="info-text" id="bp-info">BP: 17-27 Hz, -36dB/oct</div>
             <canvas id="bp-response" class="freq-response" width="220" height="50"></canvas>
+          </div>
+
+          <!-- Preconditioning -->
+          <div class="filter-section">
+            <h4>Preconditioning Filters</h4>
+            <div class="param-row">
+              <label>DC Block:</label>
+              <input type="checkbox" id="hp-enabled" checked>
+              <span class="value" id="hp-status">ON</span>
+            </div>
+            <div class="param-row">
+              <label>Highpass:</label>
+              <input type="range" id="hp-freq" min="0.2" max="10" value="1.5" step="0.1">
+              <span class="value" id="hp-freq-val">1.5 Hz</span>
+            </div>
+            <div class="param-row">
+              <label>Order:</label>
+              <input type="range" id="hp-order" min="2" max="8" value="4" step="2">
+              <span class="value" id="hp-order-val">4</span>
+            </div>
+            <div class="param-row">
+              <label>Lowpass:</label>
+              <input type="checkbox" id="lp-enabled" checked>
+              <span class="value" id="lp-status">ON</span>
+            </div>
+            <div class="param-row">
+              <label>Cutoff:</label>
+              <input type="range" id="lp-freq" min="30" max="200" value="80" step="5">
+              <span class="value" id="lp-freq-val">80 Hz</span>
+            </div>
+            <div class="param-row">
+              <label>Order:</label>
+              <input type="range" id="lp-order" min="2" max="10" value="6" step="2">
+              <span class="value" id="lp-order-val">6</span>
+            </div>
+            <div class="hint-text">DC block + lowpass reduce broadband drift before narrow filters.</div>
+          </div>
+
+          <!-- Resonator Stack -->
+          <div class="filter-section">
+            <h4>Resonator Stack</h4>
+            <div class="param-row">
+              <label>Enabled:</label>
+              <input type="checkbox" id="res-enabled">
+              <span class="value" id="res-status">OFF</span>
+            </div>
+            <div class="param-row">
+              <label>Frequency:</label>
+              <input type="range" id="res-freq" min="15" max="30" value="22" step="0.1">
+              <span class="value" id="res-freq-val">22.0 Hz</span>
+            </div>
+            <div class="param-row">
+              <label>Q Factor:</label>
+              <input type="range" id="res-q" min="5" max="200" value="60" step="5">
+              <span class="value" id="res-q-val">Q=60</span>
+            </div>
+            <div class="param-row">
+              <label>Stages:</label>
+              <input type="range" id="res-stages" min="1" max="6" value="2" step="1">
+              <span class="value" id="res-stages-val">2</span>
+            </div>
+            <div class="hint-text">Cascaded narrow bandpass sections to isolate 22 Hz in heavy noise.</div>
+          </div>
+
+          <!-- Output Smoothing -->
+          <div class="filter-section">
+            <h4>Output Smoothing</h4>
+            <div class="param-row">
+              <label>Enabled:</label>
+              <input type="checkbox" id="smooth-enabled">
+              <span class="value" id="smooth-status">OFF</span>
+            </div>
+            <div class="param-row">
+              <label>Cutoff:</label>
+              <input type="range" id="smooth-freq" min="0.5" max="25" value="5" step="0.5">
+              <span class="value" id="smooth-freq-val">5.0 Hz</span>
+            </div>
+            <div class="hint-text">One-pole smoothing after extraction to stabilize the 22 Hz envelope.</div>
           </div>
 
           <!-- 60Hz Notch -->
@@ -483,6 +566,26 @@
       return new Biquad(b0/a0, b1/a0, b2/a0, a1/a0, a2/a0);
     }
 
+    function butterworthQs(order) {
+      const sections = [];
+      const n = Math.max(1, Math.floor(order / 2));
+      for (let k = 0; k < n; k++) {
+        const angle = Math.PI * (2 * k + 1) / (4 * n);
+        sections.push(1 / (2 * Math.cos(angle)));
+      }
+      return sections;
+    }
+
+    function designButterworthLowpass(fc, fs, order) {
+      const sections = butterworthQs(order).map((Q) => designLP2(fc, Q, fs));
+      return new FilterChain(sections);
+    }
+
+    function designButterworthHighpass(fc, fs, order) {
+      const sections = butterworthQs(order).map((Q) => designHP2(fc, Q, fs));
+      return new FilterChain(sections);
+    }
+
     /**
      * Butterworth bandpass - cascade of LP and HP with Butterworth Q values
      * This creates a proper flat-top bandpass with steep rolloff
@@ -491,14 +594,8 @@
       const sections = [];
       const fLow = fc - bw/2;
       const fHigh = fc + bw/2;
-      const n = order / 2; // Number of biquad pairs
-
-      // Butterworth Q values for cascaded sections
-      const butterworthQ = [];
-      for (let k = 0; k < n; k++) {
-        const angle = Math.PI * (2*k + 1) / (4 * n);
-        butterworthQ.push(1 / (2 * Math.cos(angle)));
-      }
+      const n = Math.max(1, Math.floor(order / 2)); // Number of biquad pairs
+      const butterworthQ = butterworthQs(order);
 
       // Create LP and HP pairs
       for (let k = 0; k < n; k++) {
@@ -507,6 +604,17 @@
         sections.push(designLP2(fHigh, Q, fs));
       }
 
+      return new FilterChain(sections);
+    }
+
+    /**
+     * Resonator stack - cascaded narrow bandpass sections for tone extraction
+     */
+    function designResonatorStack(fc, Q, fs, stages) {
+      const sections = [];
+      for (let i = 0; i < stages; i++) {
+        sections.push(designBP2(fc, Q, fs));
+      }
       return new FilterChain(sections);
     }
 
@@ -687,6 +795,39 @@
     }
 
     // =========================================================================
+    // OUTPUT SMOOTHER - One-pole lowpass (EMA)
+    // =========================================================================
+
+    class OnePoleLowpass {
+      constructor(cutoffHz, sampleRate) {
+        this.sampleRate = sampleRate;
+        this.state = 0;
+        this.setCutoff(cutoffHz);
+      }
+
+      setCutoff(cutoffHz) {
+        this.cutoffHz = cutoffHz;
+        const tau = 1 / (2 * Math.PI * Math.max(0.001, cutoffHz));
+        const dt = 1 / this.sampleRate;
+        this.alpha = 1 - Math.exp(-dt / tau);
+      }
+
+      reset() { this.state = 0; }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        let y = this.state;
+        const a = this.alpha;
+        for (let i = 0; i < input.length; i++) {
+          y += a * (input[i] - y);
+          out[i] = y;
+        }
+        this.state = y;
+        return out;
+      }
+    }
+
+    // =========================================================================
     // FILTER STATE
     // =========================================================================
 
@@ -702,6 +843,14 @@
       bpBandwidth: 10,
       bpOrder: 6,             // Increased from 4 for steeper rolloff
 
+      // Preconditioning
+      highpassEnabled: true,
+      highpassFreq: 1.5,
+      highpassOrder: 4,
+      lowpassEnabled: true,
+      lowpassFreq: 80,
+      lowpassOrder: 6,
+
       // Notch
       notchEnabled: true,
       notchFreq: 60,
@@ -709,18 +858,32 @@
       notchStages: 3,         // Increased from 2 for deeper null
       notchHarmonics: false,
 
+      // Resonator
+      resonatorEnabled: false,
+      resonatorFreq: 22,
+      resonatorQ: 60,
+      resonatorStages: 2,
+
       // Lock-In
       lockInFreq: 22,
       lockInTC: 0.1,
       lockInOutput: 'magnitude',
 
+      // Smoothing
+      smoothingEnabled: false,
+      smoothingCutoff: 5,
+
       // PGA
       pgaGain: 4,
 
       // Filter instances
+      highpassFilter: null,
+      lowpassFilter: null,
       bandpassFilter: null,
       notchFilter: null,
+      resonatorFilter: null,
       lockInAmp: null,
+      smoother: null,
       decimator: null,
 
       // Frame overlap buffer for seamless processing
@@ -730,6 +893,13 @@
 
     function rebuildFilters() {
       const fs = filterState.sampleRate;
+
+      filterState.highpassFilter = filterState.highpassEnabled
+        ? designButterworthHighpass(filterState.highpassFreq, fs, filterState.highpassOrder)
+        : null;
+      filterState.lowpassFilter = filterState.lowpassEnabled
+        ? designButterworthLowpass(filterState.lowpassFreq, fs, filterState.lowpassOrder)
+        : null;
 
       // Bandpass filter - 6th order for -36dB/octave rolloff
       filterState.bandpassFilter = designButterworthBandpass(
@@ -752,12 +922,25 @@
         filterState.notchFilter = null;
       }
 
+      filterState.resonatorFilter = filterState.resonatorEnabled
+        ? designResonatorStack(
+          filterState.resonatorFreq,
+          filterState.resonatorQ,
+          fs,
+          filterState.resonatorStages
+        )
+        : null;
+
       // Lock-In amplifier with 4th-order LP
       filterState.lockInAmp = new LockInAmplifier(
         filterState.lockInFreq,
         filterState.lockInTC,
         fs
       );
+
+      filterState.smoother = filterState.smoothingEnabled
+        ? new OnePoleLowpass(filterState.smoothingCutoff, fs)
+        : null;
 
       // Decimator for high sample rate data
       if (filterState.decimationFactor > 1) {
@@ -796,11 +979,22 @@
 
       // =====================================================================
       // OPTIMAL SIGNAL CHAIN (all processing at full sample rate):
-      // 1. Notch (kill 60Hz powerline) - must be first for clean signal
-      // 2. Bandpass (remove broadband noise - helps lock-in SNR)
-      // 3. Lock-In (precision extraction at exact frequency)
-      // 4. Decimate (reduce to display rate if needed)
+      // 1. Preconditioning HP/LP (remove drift and ultrasonic noise)
+      // 2. Notch (kill 60Hz powerline) - must be early for clean signal
+      // 3. Bandpass (remove broadband noise - helps lock-in SNR)
+      // 4. Resonator stack (extra narrowband isolation)
+      // 5. Lock-In (precision extraction at exact frequency)
+      // 6. Output smoothing (stabilize envelope)
+      // 7. Decimate (reduce to display rate if needed)
       // =====================================================================
+
+      // STAGE 1: Preconditioning
+      if (filterState.highpassFilter) {
+        result = filterState.highpassFilter.processArray(result);
+      }
+      if (filterState.lowpassFilter) {
+        result = filterState.lowpassFilter.processArray(result);
+      }
 
       // STAGE 1: Always apply notch first if enabled (kills 60Hz)
       if (filterState.notchEnabled && filterState.notchFilter) {
@@ -812,12 +1006,22 @@
         result = filterState.bandpassFilter.processArray(result);
       }
 
-      // STAGE 3: Apply lock-in if enabled (final precision extraction)
+      // STAGE 3: Resonator stack for extra narrowband isolation
+      if (filterState.resonatorFilter) {
+        result = filterState.resonatorFilter.processArray(result);
+      }
+
+      // STAGE 4: Apply lock-in if enabled (final precision extraction)
       if (filterState.lockInEnabled && filterState.lockInAmp) {
         result = filterState.lockInAmp.processArray(result, filterState.lockInOutput);
       }
 
-      // STAGE 4: Decimate for display if sample rate > display rate
+      // STAGE 5: Output smoothing
+      if (filterState.smoother) {
+        result = filterState.smoother.processArray(result);
+      }
+
+      // STAGE 6: Decimate for display if sample rate > display rate
       if (filterState.decimator && filterState.decimationFactor > 1) {
         result = filterState.decimator.process(result);
       }
@@ -833,15 +1037,27 @@
       let parts = [];
 
       // Build chain description
+      if (filterState.highpassEnabled) {
+        parts.push(`HP:${filterState.highpassFreq.toFixed(1)}Hz`);
+      }
+      if (filterState.lowpassEnabled) {
+        parts.push(`LP:${filterState.lowpassFreq.toFixed(0)}Hz`);
+      }
       if (filterState.notchEnabled) {
         parts.push(`Notch:-${filterState.notchStages * 20}dB@${filterState.notchFreq}Hz`);
       }
       if (filterState.enabled) {
         parts.push(`BP:${fLow.toFixed(0)}-${fHigh.toFixed(0)}Hz`);
       }
+      if (filterState.resonatorEnabled) {
+        parts.push(`Res:${filterState.resonatorFreq.toFixed(1)}Hz(Q${filterState.resonatorQ})`);
+      }
       if (filterState.lockInEnabled) {
         const bw = 1 / (2 * Math.PI * filterState.lockInTC);
         parts.push(`LockIn:${filterState.lockInFreq.toFixed(1)}Hz±${bw.toFixed(1)}Hz`);
+      }
+      if (filterState.smoothingEnabled) {
+        parts.push(`Smooth:${filterState.smoothingCutoff.toFixed(1)}Hz`);
       }
 
       info = parts.length > 0 ? parts.join(' → ') : 'No filtering';
@@ -867,7 +1083,8 @@
       ctx.fillStyle = '#111';
       ctx.fillRect(0, 0, w, h);
 
-      if (!filterState.bandpassFilter && !filterState.notchFilter) return;
+      if (!filterState.bandpassFilter && !filterState.notchFilter && !filterState.highpassFilter &&
+        !filterState.lowpassFilter && !filterState.resonatorFilter) return;
 
       ctx.strokeStyle = '#0f0';
       ctx.lineWidth = 1;
@@ -881,8 +1098,11 @@
         const omega = 2 * Math.PI * freq / fs;
 
         let mag = 1;
+        if (filterState.highpassFilter) mag *= filterState.highpassFilter.magnitudeAt(omega);
+        if (filterState.lowpassFilter) mag *= filterState.lowpassFilter.magnitudeAt(omega);
         if (filterState.bandpassFilter) mag *= filterState.bandpassFilter.magnitudeAt(omega);
         if (filterState.notchFilter) mag *= filterState.notchFilter.magnitudeAt(omega);
+        if (filterState.resonatorFilter) mag *= filterState.resonatorFilter.magnitudeAt(omega);
 
         const dB = Math.max(-60, 20 * Math.log10(mag + 1e-10));
         const y = h - ((dB + 60) / 60) * h;
@@ -905,6 +1125,7 @@
       };
 
       drawMarker(filterState.bpFreq, '#ff0');
+      if (filterState.resonatorEnabled) drawMarker(filterState.resonatorFreq, '#0ff');
       if (filterState.notchEnabled) drawMarker(filterState.notchFreq, '#f00');
     }
 
@@ -925,8 +1146,11 @@
         const hasBP = filterState.enabled;
         const hasLI = filterState.lockInEnabled;
         const hasNotch = filterState.notchEnabled;
+        const hasPre = filterState.highpassEnabled || filterState.lowpassEnabled;
+        const hasRes = filterState.resonatorEnabled;
+        const hasSmooth = filterState.smoothingEnabled;
 
-        simpleControls.style.display = (hasBP || hasLI) ? 'flex' : 'none';
+        simpleControls.style.display = (hasBP || hasLI || hasRes) ? 'flex' : 'none';
         btnEnable.classList.toggle('active', hasBP);
         btnEnable.textContent = hasBP ? 'Filters ON' : 'Enable Filters';
         btnLockin.classList.toggle('lockin-active', hasLI);
@@ -941,9 +1165,13 @@
         } else if (hasBP) {
           masterStatus.textContent = 'FILTER';
           masterStatus.className = 'filter-status on';
+        } else if (hasRes) {
+          masterStatus.textContent = 'RESONATOR';
+          masterStatus.className = 'filter-status on';
         } else {
-          masterStatus.textContent = hasNotch ? 'NOTCH' : 'OFF';
-          masterStatus.className = hasNotch ? 'filter-status on' : 'filter-status off';
+          const any = hasNotch || hasPre || hasSmooth;
+          masterStatus.textContent = any ? 'FILTER' : 'OFF';
+          masterStatus.className = any ? 'filter-status on' : 'filter-status off';
         }
         updateFilterInfo();
       };
@@ -979,11 +1207,14 @@
       const updateFreq = (delta) => {
         filterState.bpFreq = Math.max(15, Math.min(30, filterState.bpFreq + delta));
         filterState.lockInFreq = filterState.bpFreq;
+        filterState.resonatorFreq = filterState.bpFreq;
         freqDisplay.textContent = filterState.bpFreq;
         bpFreqSlider.value = filterState.bpFreq;
         lockinFreqSlider.value = filterState.lockInFreq;
+        document.getElementById('res-freq').value = filterState.resonatorFreq;
         document.getElementById('bp-freq-val').textContent = filterState.bpFreq.toFixed(1) + ' Hz';
         document.getElementById('lockin-freq-val').textContent = filterState.lockInFreq.toFixed(1) + ' Hz';
+        document.getElementById('res-freq-val').textContent = filterState.resonatorFreq.toFixed(1) + ' Hz';
         rebuildFilters();
       };
 
@@ -999,6 +1230,7 @@
         document.getElementById('notch-enabled').checked = filterState.notchEnabled;
         document.getElementById('notch-status').textContent = filterState.notchEnabled ? 'ON' : 'OFF';
         rebuildFilters();
+        updateMasterStatus();
       });
 
       // PGA controls
@@ -1023,10 +1255,13 @@
       lockinFreqSlider.addEventListener('input', (e) => {
         filterState.lockInFreq = parseFloat(e.target.value);
         filterState.bpFreq = filterState.lockInFreq;
+        filterState.resonatorFreq = filterState.lockInFreq;
         document.getElementById('lockin-freq-val').textContent = filterState.lockInFreq.toFixed(1) + ' Hz';
         freqDisplay.textContent = Math.round(filterState.lockInFreq);
         bpFreqSlider.value = filterState.bpFreq;
         document.getElementById('bp-freq-val').textContent = filterState.bpFreq.toFixed(1) + ' Hz';
+        document.getElementById('res-freq').value = filterState.resonatorFreq;
+        document.getElementById('res-freq-val').textContent = filterState.resonatorFreq.toFixed(1) + ' Hz';
         rebuildFilters();
       });
 
@@ -1044,10 +1279,13 @@
       bpFreqSlider.addEventListener('input', (e) => {
         filterState.bpFreq = parseFloat(e.target.value);
         filterState.lockInFreq = filterState.bpFreq;
+        filterState.resonatorFreq = filterState.bpFreq;
         document.getElementById('bp-freq-val').textContent = filterState.bpFreq.toFixed(1) + ' Hz';
         freqDisplay.textContent = Math.round(filterState.bpFreq);
         lockinFreqSlider.value = filterState.lockInFreq;
         document.getElementById('lockin-freq-val').textContent = filterState.lockInFreq.toFixed(1) + ' Hz';
+        document.getElementById('res-freq').value = filterState.resonatorFreq;
+        document.getElementById('res-freq-val').textContent = filterState.resonatorFreq.toFixed(1) + ' Hz';
         rebuildFilters();
       });
 
@@ -1063,6 +1301,85 @@
         rebuildFilters();
       });
 
+      // Preconditioning controls
+      document.getElementById('hp-enabled').addEventListener('change', (e) => {
+        filterState.highpassEnabled = e.target.checked;
+        document.getElementById('hp-status').textContent = filterState.highpassEnabled ? 'ON' : 'OFF';
+        rebuildFilters();
+        updateMasterStatus();
+      });
+
+      document.getElementById('hp-freq').addEventListener('input', (e) => {
+        filterState.highpassFreq = parseFloat(e.target.value);
+        document.getElementById('hp-freq-val').textContent = filterState.highpassFreq.toFixed(1) + ' Hz';
+        rebuildFilters();
+      });
+
+      document.getElementById('hp-order').addEventListener('input', (e) => {
+        filterState.highpassOrder = parseInt(e.target.value);
+        document.getElementById('hp-order-val').textContent = filterState.highpassOrder;
+        rebuildFilters();
+      });
+
+      document.getElementById('lp-enabled').addEventListener('change', (e) => {
+        filterState.lowpassEnabled = e.target.checked;
+        document.getElementById('lp-status').textContent = filterState.lowpassEnabled ? 'ON' : 'OFF';
+        rebuildFilters();
+        updateMasterStatus();
+      });
+
+      document.getElementById('lp-freq').addEventListener('input', (e) => {
+        filterState.lowpassFreq = parseFloat(e.target.value);
+        document.getElementById('lp-freq-val').textContent = filterState.lowpassFreq.toFixed(0) + ' Hz';
+        rebuildFilters();
+      });
+
+      document.getElementById('lp-order').addEventListener('input', (e) => {
+        filterState.lowpassOrder = parseInt(e.target.value);
+        document.getElementById('lp-order-val').textContent = filterState.lowpassOrder;
+        rebuildFilters();
+      });
+
+      // Resonator controls
+      document.getElementById('res-enabled').addEventListener('change', (e) => {
+        filterState.resonatorEnabled = e.target.checked;
+        document.getElementById('res-status').textContent = filterState.resonatorEnabled ? 'ON' : 'OFF';
+        rebuildFilters();
+        updateMasterStatus();
+      });
+
+      document.getElementById('res-freq').addEventListener('input', (e) => {
+        filterState.resonatorFreq = parseFloat(e.target.value);
+        document.getElementById('res-freq-val').textContent = filterState.resonatorFreq.toFixed(1) + ' Hz';
+        rebuildFilters();
+      });
+
+      document.getElementById('res-q').addEventListener('input', (e) => {
+        filterState.resonatorQ = parseFloat(e.target.value);
+        document.getElementById('res-q-val').textContent = 'Q=' + filterState.resonatorQ;
+        rebuildFilters();
+      });
+
+      document.getElementById('res-stages').addEventListener('input', (e) => {
+        filterState.resonatorStages = parseInt(e.target.value);
+        document.getElementById('res-stages-val').textContent = filterState.resonatorStages;
+        rebuildFilters();
+      });
+
+      // Output smoothing controls
+      document.getElementById('smooth-enabled').addEventListener('change', (e) => {
+        filterState.smoothingEnabled = e.target.checked;
+        document.getElementById('smooth-status').textContent = filterState.smoothingEnabled ? 'ON' : 'OFF';
+        rebuildFilters();
+        updateMasterStatus();
+      });
+
+      document.getElementById('smooth-freq').addEventListener('input', (e) => {
+        filterState.smoothingCutoff = parseFloat(e.target.value);
+        document.getElementById('smooth-freq-val').textContent = filterState.smoothingCutoff.toFixed(1) + ' Hz';
+        rebuildFilters();
+      });
+
       // Notch controls
       document.getElementById('notch-enabled').addEventListener('change', (e) => {
         filterState.notchEnabled = e.target.checked;
@@ -1070,6 +1387,7 @@
         btn60hz.textContent = filterState.notchEnabled ? 'ON' : 'OFF';
         btn60hz.classList.toggle('active', filterState.notchEnabled);
         rebuildFilters();
+        updateMasterStatus();
       });
 
       document.getElementById('notch-freq').addEventListener('input', (e) => {
@@ -1097,6 +1415,7 @@
       });
 
       rebuildFilters();
+      updateMasterStatus();
     }
 
     // =========================================================================
@@ -1258,7 +1577,9 @@
       }
 
       // Apply DSP filters
-      const needsProcessing = filterState.enabled || filterState.lockInEnabled || filterState.notchEnabled;
+      const needsProcessing = filterState.enabled || filterState.lockInEnabled || filterState.notchEnabled ||
+        filterState.highpassEnabled || filterState.lowpassEnabled || filterState.resonatorEnabled ||
+        filterState.smoothingEnabled;
       if (needsProcessing) {
         geo = applyFilters(geo);
       }
