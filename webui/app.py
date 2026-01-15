@@ -82,7 +82,11 @@ async def ws_handler(request):
 
 
 async def index_handler(request):
-    return web.FileResponse(path="static/index.html")
+    return web.FileResponse(
+        path="static/index.html",
+        content_type="text/html",
+        charset="utf-8",
+    )
 
 
 async def init_app():
