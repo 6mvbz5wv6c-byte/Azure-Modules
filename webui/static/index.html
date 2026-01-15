@@ -3436,11 +3436,15 @@
     let followLive = true;
     let paused = false;
     let suppressRelayout = false;
-    let nextTime = null;
-    let lastTime = null;
-    let firstTime = null;
-    let viewWindowSeconds = 45;  // Current view window (0 = all data)
-    let lastRelayoutTime = 0;    // Throttle relayouts
+
+    // Timing state
+    let nextTime = null;           // Next timestamp to assign
+    let bufferStartTime = null;    // Oldest timestamp currently in buffer (moves forward!)
+    let bufferEndTime = null;      // Newest timestamp in buffer
+    let totalSamplesReceived = 0;  // Total samples since start
+
+    // View settings
+    let viewWindowSeconds = 45;    // 0 = show all buffered data
 
     function initPlot() {
       Plotly.newPlot('scope', [{
@@ -3457,8 +3461,7 @@
           showgrid: true,
           gridcolor: '#222',
           zeroline: false,
-          tickfont: { color: '#888', size: 10 },
-          fixedrange: false  // Allow zoom/pan
+          tickfont: { color: '#888', size: 10 }
         },
         yaxis: {
           title: 'Counts',
@@ -3471,10 +3474,9 @@
         responsive: true,
         displaylogo: false,
         modeBarButtonsToRemove: ['select2d', 'lasso2d'],
-        scrollZoom: true  // Enable scroll to zoom
+        scrollZoom: true
       }).then((gd) => {
         gd.on('plotly_relayout', (e) => {
-          // User manually zoomed/panned - stop following
           if (!suppressRelayout && e['xaxis.range[0]'] !== undefined) {
             followLive = false;
             updatePauseButton();
@@ -3494,28 +3496,30 @@
       }
     }
 
-    function setLiveView() {
-      if (lastTime == null) return;
-
-      // Throttle relayout calls to max once per 500ms for smoother performance
-      const now = Date.now();
-      if (now - lastRelayoutTime < 500) return;
-      lastRelayoutTime = now;
+    function updateView() {
+      if (bufferEndTime == null || bufferStartTime == null) return;
 
       suppressRelayout = true;
 
-      let xRange;
+      // Calculate visible range based on what's actually in the buffer
+      let xStart, xEnd;
+
       if (viewWindowSeconds === 0) {
-        // Show all data
-        const startTime = firstTime || 0;
-        xRange = [startTime, lastTime];
+        // Show all data in buffer
+        xStart = bufferStartTime;
+        xEnd = bufferEndTime;
       } else {
-        // Show last N seconds
-        xRange = [Math.max(firstTime || 0, lastTime - viewWindowSeconds), lastTime];
+        // Show last N seconds, but clamp to buffer bounds
+        xEnd = bufferEndTime;
+        xStart = Math.max(bufferStartTime, bufferEndTime - viewWindowSeconds);
       }
 
-      Plotly.relayout('scope', { 'xaxis.range': xRange })
-        .then(() => { suppressRelayout = false; });
+      // Add small padding
+      const padding = (xEnd - xStart) * 0.02;
+
+      Plotly.relayout('scope', {
+        'xaxis.range': [xStart - padding, xEnd + padding]
+      }).then(() => { suppressRelayout = false; });
     }
 
     function appendFrame(msg) {
@@ -3525,40 +3529,58 @@
 
       const frameLen = geo.length;
       const dt = 1.0 / SAMPLE_RATE_HZ;
+
+      // Initialize timing on first frame
       if (nextTime === null) {
-        nextTime = msg.t0 || 0;
-        firstTime = nextTime;
+        nextTime = 0;  // Start at 0 for simplicity
+        bufferStartTime = 0;
       }
 
-      // Apply filters (standard, lock-in, or advanced pipeline)
+      // Apply filters
       if (filterState.enabled || filterState.lockInEnabled || filterState.advancedEnabled) {
         geo = applyFilters(geo);
       }
 
+      // Build timestamp array for this frame
       const xs = new Array(frameLen);
-      for (let i = 0; i < frameLen; i++) xs[i] = nextTime + i * dt;
-      nextTime += frameLen * dt;
-      lastTime = xs[frameLen - 1];
+      for (let i = 0; i < frameLen; i++) {
+        xs[i] = nextTime + i * dt;
+      }
 
+      // Update timing state
+      const frameStartTime = nextTime;
+      nextTime += frameLen * dt;
+      bufferEndTime = nextTime - dt;  // Last sample timestamp
+      totalSamplesReceived += frameLen;
+
+      // Calculate buffer start time (oldest data still in buffer)
+      // After MAX_POINTS, old data gets dropped
+      const samplesInBuffer = Math.min(totalSamplesReceived, MAX_POINTS);
+      bufferStartTime = bufferEndTime - (samplesInBuffer - 1) * dt;
+
+      // Add data to chart
       Plotly.extendTraces('scope', { x: [xs], y: [geo] }, [0], MAX_POINTS);
 
+      // Update status display
       let mode = '';
       if (filterState.goertzelEnabled) mode = ' [GOERTZEL]';
       else if (filterState.lockInEnabled) mode = ' [LOCK-IN]';
       else if (filterState.advancedEnabled) mode = ' [ADVANCED]';
       else if (filterState.enabled) mode = ' [FILTERED]';
 
-      const elapsed = lastTime - (firstTime || 0);
-      viewEl.textContent = `${elapsed.toFixed(1)}s${mode}`;
+      const bufferDuration = bufferEndTime - bufferStartTime;
+      viewEl.textContent = `${bufferEndTime.toFixed(1)}s (buf: ${bufferDuration.toFixed(0)}s)${mode}`;
 
-      // Only update view if following and not paused
-      if (followLive && !paused) setLiveView();
+      // Update view if following live
+      if (followLive && !paused) {
+        updateView();
+      }
     }
 
     // View window selector
     viewWindowSelect.addEventListener('change', (e) => {
       viewWindowSeconds = parseInt(e.target.value);
-      if (followLive && !paused) setLiveView();
+      updateView();
     });
 
     // Pause/Resume button
@@ -3566,7 +3588,7 @@
       paused = !paused;
       if (!paused) {
         followLive = true;
-        setLiveView();
+        updateView();
       }
       updatePauseButton();
     });
@@ -3576,7 +3598,7 @@
       followLive = true;
       paused = false;
       updatePauseButton();
-      setLiveView();
+      updateView();
     });
 
     function connectWS() {
