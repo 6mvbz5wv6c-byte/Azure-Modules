@@ -11,6 +11,7 @@
 #include <mbedtls/md.h>
 #include <mbedtls/base64.h>
 #include <time.h>
+#include <sys/time.h>
 
 // DigiCert Global Root G2 certificate for Azure IoT Hub
 // This is the primary certificate after Azure's September 2024 migration
@@ -193,23 +194,48 @@ bool AzureIoTClient::connect() {
         LOG_PRINTLN("[Azure] LTE network connected!");
     }
 
-    // Step 6: Generate SAS token
-    // Note: NTP doesn't work over LTE (only WiFi), so we use a hardcoded timestamp
-    // Azure accepts tokens with expiry up to 365 days in the future
+    // Step 6: Get network time and generate SAS token
     LOG_PRINTLN("[Azure] ========== TIMESTAMP SETUP ==========");
-    uint32_t now = time(nullptr);
-    LOG_PRINTF("[Azure] System time from time(): %lu\n", (unsigned long)now);
+
+    // Try to get time from cellular network first
+    WalterModemRsp rsp = {};
+    uint32_t now = 0;
+
+    LOG_PRINTLN("[Azure] Requesting network time from modem (AT+CCLK)...");
+    if (WalterModem::getClock(&rsp)) {
+        if (rsp.type == WALTER_MODEM_RSP_DATA_TYPE_CLOCK && rsp.data.clock.epochTime > 1577836800) {
+            now = rsp.data.clock.epochTime;
+            LOG_PRINTF("[Azure] Network time received: %lu (TZ offset: %d sec)\n",
+                      (unsigned long)now, rsp.data.clock.timeZoneOffset);
+
+            // Update system time so other code can use it
+            struct timeval tv = { .tv_sec = (time_t)now, .tv_usec = 0 };
+            settimeofday(&tv, nullptr);
+            LOG_PRINTLN("[Azure] System time updated from network");
+        } else {
+            LOG_PRINTLN("[Azure] Network time invalid or not available");
+        }
+    } else {
+        LOG_PRINTLN("[Azure] Failed to get network time from modem");
+    }
+
+    // Fallback to system time
+    if (now == 0) {
+        now = time(nullptr);
+        LOG_PRINTF("[Azure] System time from time(): %lu\n", (unsigned long)now);
+    }
 
     // Check if time is reasonable (after year 2020)
     // 1577836800 = Jan 1, 2020 00:00:00 UTC
     if (now < 1577836800) {
-        // Time not set - use a recent timestamp for this deployment
+        // Time not set - use a hardcoded timestamp for this deployment
         // Jan 16, 2026 00:00:00 UTC = 1736985600
         now = 1736985600;
-        LOG_PRINTLN("[Azure] Time not set, using hardcoded timestamp");
+        LOG_PRINTLN("[Azure] WARNING: Time not set, using hardcoded timestamp");
         LOG_PRINTLN("[Azure] Hardcoded: Jan 16, 2026 00:00:00 UTC");
+        LOG_PRINTLN("[Azure] SAS token may be rejected if actual date differs!");
     } else {
-        LOG_PRINTLN("[Azure] Using system time (appears valid)");
+        LOG_PRINTLN("[Azure] Using valid timestamp");
     }
 
     LOG_PRINTF("[Azure] Current timestamp (used): %lu\n", (unsigned long)now);
