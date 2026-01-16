@@ -52,6 +52,7 @@ AzureIoTClient::AzureIoTClient()
     , _telemetryTask(nullptr)
     , _ringBuffer(nullptr)
     , _stopRequested(false)
+    , _adcAvailable(false)
     , _payloadBuffer(nullptr)
 {
     memset(_sasToken, 0, sizeof(_sasToken));
@@ -268,13 +269,73 @@ bool AzureIoTClient::publishFrame(const AdcFrame& frame) {
     }
 }
 
+bool AzureIoTClient::publishStatus(bool adcOnline, const char* errorMsg) {
+    if (!_connected) {
+        LOG_PRINTLN("[Azure] Not connected, cannot publish status");
+        _errorCount++;
+        return false;
+    }
+
+    // Check if SAS token needs refresh
+    uint32_t now = time(nullptr);
+    if (now > 1000000000 && now > (_sasExpiry - 300)) {
+        LOG_PRINTLN("[Azure] SAS token expiring, reconnecting...");
+        disconnect();
+        if (!connect()) {
+            return false;
+        }
+    }
+
+    // Build status JSON payload
+    char* jsonPayload = _payloadBuffer;
+    size_t jsonLen = snprintf(jsonPayload, PAYLOAD_BUFFER_SIZE,
+        "{"
+        "\"deviceId\":\"%s\","
+        "\"messageType\":\"status\","
+        "\"timestamp\":%lu,"
+        "\"uptimeMs\":%lu,"
+        "\"adcOnline\":%s,"
+        "\"lteRssi\":%d,"
+        "\"freeHeap\":%u,"
+        "\"publishCount\":%u,"
+        "\"errorCount\":%u"
+        "%s%s%s"
+        "}",
+        AZURE_DEVICE_ID,
+        (unsigned long)now,
+        (unsigned long)millis(),
+        adcOnline ? "true" : "false",
+        _rssi,
+        ESP.getFreeHeap(),
+        _publishCount,
+        _errorCount,
+        errorMsg ? ",\"error\":\"" : "",
+        errorMsg ? errorMsg : "",
+        errorMsg ? "\"" : ""
+    );
+
+    LOG_PRINTF("[Azure] Publishing status: adcOnline=%s\n", adcOnline ? "true" : "false");
+
+    // Publish to Azure IoT Hub telemetry topic
+    if (WalterModem::mqttPublish(AZURE_TELEMETRY_TOPIC, (uint8_t*)jsonPayload, jsonLen)) {
+        _publishCount++;
+        return true;
+    } else {
+        LOG_PRINTLN("[Azure] MQTT status publish failed");
+        _errorCount++;
+        _connected = false;
+        return false;
+    }
+}
+
 // =============================================================================
 // TELEMETRY TASK
 // =============================================================================
 
-void AzureIoTClient::startTelemetryTask(AdcRingBuffer* ringBuffer, TaskHandle_t* taskHandle) {
+void AzureIoTClient::startTelemetryTask(AdcRingBuffer* ringBuffer, TaskHandle_t* taskHandle, bool adcAvailable) {
     _ringBuffer = ringBuffer;
     _stopRequested = false;
+    _adcAvailable = adcAvailable;
 
     xTaskCreatePinnedToCore(
         telemetryTaskFunc,
@@ -290,7 +351,7 @@ void AzureIoTClient::startTelemetryTask(AdcRingBuffer* ringBuffer, TaskHandle_t*
         *taskHandle = _telemetryTask;
     }
 
-    LOG_PRINTLN("[Azure] Telemetry task started");
+    LOG_PRINTF("[Azure] Telemetry task started (ADC %s)\n", adcAvailable ? "available" : "unavailable");
 }
 
 void AzureIoTClient::stopTelemetryTask() {
@@ -310,13 +371,20 @@ void AzureIoTClient::telemetryTaskFunc(void* param) {
 
     LOG_PRINTLN("[Azure Task] Starting telemetry loop");
 
-    // Create buffer cursor
-    BufferCursor cursor(*client->_ringBuffer);
-    cursor.reset();  // Start from current position
+    // Create buffer cursor only if ADC available
+    BufferCursor* cursor = nullptr;
+    if (client->_adcAvailable && client->_ringBuffer) {
+        cursor = new BufferCursor(*client->_ringBuffer);
+        cursor->reset();
+    }
 
     // Connection retry state
     uint32_t retryDelay = 2000;
     const uint32_t maxRetryDelay = 60000;
+
+    // Status heartbeat timing
+    uint32_t lastStatusTime = 0;
+    const uint32_t statusIntervalMs = 30000;  // Send status every 30 seconds
 
     while (!client->_stopRequested) {
         // Ensure connection
@@ -325,6 +393,10 @@ void AzureIoTClient::telemetryTaskFunc(void* param) {
 
             if (client->connect()) {
                 retryDelay = 2000;  // Reset retry delay on success
+                // Send immediate status on connect
+                client->publishStatus(client->_adcAvailable,
+                    client->_adcAvailable ? nullptr : "ADC not detected");
+                lastStatusTime = millis();
             } else {
                 LOG_PRINTF("[Azure Task] Connection failed, retry in %u ms\n", retryDelay);
                 vTaskDelay(pdMS_TO_TICKS(retryDelay));
@@ -333,17 +405,33 @@ void AzureIoTClient::telemetryTaskFunc(void* param) {
             }
         }
 
-        // Wait for and process frames
-        AdcFrame frame;
-        if (cursor.waitAndRead(frame, 1000)) {
-            if (!client->publishFrame(frame)) {
-                LOG_PRINTLN("[Azure Task] Publish failed, will reconnect");
-                // Frame will be lost if buffer overflows during reconnection
+        // Send periodic status heartbeat
+        uint32_t now = millis();
+        if (now - lastStatusTime >= statusIntervalMs) {
+            client->publishStatus(client->_adcAvailable,
+                client->_adcAvailable ? nullptr : "ADC not detected");
+            lastStatusTime = now;
+        }
+
+        // Process ADC frames if available
+        if (cursor && client->_adcAvailable) {
+            AdcFrame frame;
+            if (cursor->waitAndRead(frame, 1000)) {
+                if (!client->publishFrame(frame)) {
+                    LOG_PRINTLN("[Azure Task] Publish failed, will reconnect");
+                }
             }
+        } else {
+            // No ADC, just wait a bit before next status check
+            vTaskDelay(pdMS_TO_TICKS(1000));
         }
 
         // Yield to other tasks
         taskYIELD();
+    }
+
+    if (cursor) {
+        delete cursor;
     }
 
     LOG_PRINTLN("[Azure Task] Telemetry loop exited");

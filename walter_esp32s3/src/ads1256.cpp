@@ -40,6 +40,10 @@ ADS1256::ADS1256(SPIClass& spi)
 // =============================================================================
 
 bool ADS1256::begin() {
+    // Log pin configuration
+    LOG_PRINTF("[ADS1256] Pins: CS=%d, DRDY=%d, RST=%d, SCK=%d, MISO=%d, MOSI=%d\n",
+               PIN_ADS_CS, PIN_ADS_DRDY, PIN_ADS_RST, PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI);
+
     // Configure GPIO pins
     pinMode(PIN_ADS_CS, OUTPUT);
     pinMode(PIN_ADS_DRDY, INPUT_PULLUP);  // Use pullup to prevent floating when no chip
@@ -49,7 +53,11 @@ bool ADS1256::begin() {
 
     // Hardware reset
     reset();
-    delay(50);
+    delay(100);  // Wait longer after reset
+
+    // Check DRDY pin state
+    LOG_PRINTF("[ADS1256] DRDY state after reset: %s\n",
+               digitalRead(PIN_ADS_DRDY) == LOW ? "LOW (ready)" : "HIGH (busy)");
 
     // Verify chip ID
     uint8_t chipId = readChipID();
@@ -199,6 +207,7 @@ uint8_t ADS1256::readChipID() {
     waitDRDY();
 
     uint8_t status = readRegister(ADS_REG_STATUS);
+    LOG_PRINTF("[ADS1256] STATUS register raw: 0x%02X\n", status);
     return (status >> 4) & 0x0F;
 }
 
@@ -211,12 +220,14 @@ void ADS1256::selfCalibrate() {
 }
 
 void ADS1256::reset() {
+    LOG_PRINTLN("[ADS1256] Performing hardware reset...");
     digitalWrite(PIN_ADS_RST, HIGH);
     delay(10);
     digitalWrite(PIN_ADS_RST, LOW);
     delay(10);
     digitalWrite(PIN_ADS_RST, HIGH);
-    delay(50);
+    delay(100);  // Wait for chip to come out of reset
+    LOG_PRINTLN("[ADS1256] Reset complete");
 }
 
 bool ADS1256::isDataReady() {
@@ -256,14 +267,20 @@ void ADS1256::writeRegister(uint8_t reg, uint8_t value) {
 }
 
 uint8_t ADS1256::readRegister(uint8_t reg) {
+    uint8_t cmd = ADS_CMD_RREG | (reg & 0x0F);
+
     csLow();
+    delayMicroseconds(5);  // t_CSS: CS setup time
     _spi.beginTransaction(_spiSettings);
-    _spi.transfer(ADS_CMD_RREG | (reg & 0x0F));
-    _spi.transfer(0x00);  // Read 1 register
-    delayMicroseconds(10);
+    _spi.transfer(cmd);
+    _spi.transfer(0x00);  // Read 1 register (n-1 = 0)
+    delayMicroseconds(10);  // t6 delay (50 CLKIN cycles)
     uint8_t value = _spi.transfer(0x00);
     _spi.endTransaction();
+    delayMicroseconds(5);  // t_CSH: CS hold time
     csHigh();
+
+    LOG_PRINTF("[ADS1256] Read reg 0x%02X cmd=0x%02X -> 0x%02X\n", reg, cmd, value);
     return value;
 }
 

@@ -58,11 +58,20 @@ public:
     bool publishFrame(const AdcFrame& frame);
 
     /**
-     * @brief Start telemetry task
-     * @param ringBuffer Ring buffer to read frames from
-     * @param taskHandle Output task handle
+     * @brief Publish device status/heartbeat message
+     * @param adcOnline Whether ADC is functioning
+     * @param errorMsg Optional error message (nullptr if none)
+     * @return true if published successfully
      */
-    void startTelemetryTask(AdcRingBuffer* ringBuffer, TaskHandle_t* taskHandle);
+    bool publishStatus(bool adcOnline, const char* errorMsg = nullptr);
+
+    /**
+     * @brief Start telemetry task
+     * @param ringBuffer Ring buffer to read frames from (can be nullptr)
+     * @param taskHandle Output task handle
+     * @param adcAvailable Whether ADC is available for sampling
+     */
+    void startTelemetryTask(AdcRingBuffer* ringBuffer, TaskHandle_t* taskHandle, bool adcAvailable = true);
 
     /**
      * @brief Stop telemetry task
@@ -138,6 +147,7 @@ private:
     TaskHandle_t    _telemetryTask;
     AdcRingBuffer*  _ringBuffer;
     volatile bool   _stopRequested;
+    bool            _adcAvailable;
 
     // Task function
     static void telemetryTaskFunc(void* param);

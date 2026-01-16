@@ -44,6 +44,7 @@ TaskHandle_t    webuiTaskHandle = nullptr;
 
 // System state
 volatile bool   systemRunning = true;
+volatile bool   adcAvailable = false;
 uint32_t        bootTime = 0;
 
 // =============================================================================
@@ -107,8 +108,9 @@ void modemInitTask(void* param) {
 
     // Initialize Azure IoT client
     if (azureClient && azureClient->begin()) {
-        // Start telemetry task
-        azureClient->startTelemetryTask(ringBuffer, &telemetryTaskHandle);
+        // Start telemetry task - pass ADC availability status
+        azureClient->startTelemetryTask(ringBuffer, &telemetryTaskHandle, adcAvailable);
+        LOG_PRINTF("[Modem] Telemetry started (ADC %s)\n", adcAvailable ? "online" : "offline");
     } else {
         LOG_PRINTLN("[Modem] ERROR: Azure IoT client initialization failed");
     }
@@ -156,8 +158,11 @@ void setup() {
     // ADS1256
     adc = new ADS1256(*adcSPI);
     LOG_PRINTLN("[Setup] Initializing ADS1256...");
-    if (!adc->begin()) {
-        LOG_PRINTLN("[Setup] WARNING: ADS1256 init returned error, continuing anyway");
+    adcAvailable = adc->begin();
+    if (!adcAvailable) {
+        LOG_PRINTLN("[Setup] WARNING: ADS1256 not available - will report to Azure");
+    } else {
+        LOG_PRINTLN("[Setup] ADS1256 ready");
     }
 
     // Web server
