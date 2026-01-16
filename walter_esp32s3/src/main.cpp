@@ -23,6 +23,7 @@
 #include "ads1256.h"
 #include "azure_iot.h"
 #include "webui.h"
+#include "gnss.h"
 
 // =============================================================================
 // GLOBAL OBJECTS (pointers - allocated in setup() to avoid constructor issues)
@@ -86,7 +87,8 @@ void printStatus() {
     LOG_PRINTF("ADC: %u | ", adc ? adc->getSampleCount() : 0);
     LOG_PRINTF("Frames: %u | ", ringBuffer ? ringBuffer->getFrameCount() : 0);
     LOG_PRINTF("Azure: %u | ", azureClient ? azureClient->getPublishCount() : 0);
-    LOG_PRINTF("WS: %d\n", webServer ? webServer->getClientCount() : 0);
+    LOG_PRINTF("WS: %d | ", webServer ? webServer->getClientCount() : 0);
+    LOG_PRINTF("GNSS: %s\n", gnssManager.hasValidLocation() ? "OK" : "N/A");
 }
 
 // =============================================================================
@@ -105,6 +107,21 @@ void modemInitTask(void* param) {
     }
 
     LOG_PRINTLN("[Modem] Modem initialized successfully");
+
+#if GNSS_ENABLE_AT_BOOT
+    // Get GNSS fix BEFORE connecting to LTE
+    // The modem cannot do both simultaneously, so we get location first
+    LOG_PRINTLN("[Modem] Acquiring initial GNSS fix (before LTE)...");
+
+    gnssManager.begin();
+
+    if (gnssManager.acquireFix()) {
+        const GnssLocation& loc = gnssManager.getLocation();
+        LOG_PRINTF("[Modem] GNSS fix acquired: %.6f, %.6f\n", loc.latitude, loc.longitude);
+    } else {
+        LOG_PRINTLN("[Modem] WARNING: Could not acquire GNSS fix - continuing without location");
+    }
+#endif
 
     // Initialize Azure IoT client
     if (azureClient && azureClient->begin()) {
@@ -238,6 +255,14 @@ void loop() {
                 LOG_PRINTF("WS Clients:   %d\n", webServer ? webServer->getClientCount() : 0);
                 LOG_PRINTF("Free Heap:    %d\n", ESP.getFreeHeap());
                 LOG_PRINTF("Free PSRAM:   %d\n", ESP.getFreePsram());
+                if (gnssManager.hasValidLocation()) {
+                    const GnssLocation& loc = gnssManager.getLocation();
+                    LOG_PRINTF("GNSS:         %.6f, %.6f (age: %lu sec)\n",
+                              loc.latitude, loc.longitude,
+                              gnssManager.getLocationAgeMs() / 1000);
+                } else {
+                    LOG_PRINTLN("GNSS:         No fix");
+                }
                 break;
 
             case 'r':

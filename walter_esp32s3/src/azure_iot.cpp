@@ -7,6 +7,7 @@
  */
 
 #include "azure_iot.h"
+#include "gnss.h"
 #include <mbedtls/md.h>
 #include <mbedtls/base64.h>
 #include <time.h>
@@ -282,6 +283,10 @@ bool AzureIoTClient::publishFrame(const AdcFrame& frame) {
     char* base64Samples = _payloadBuffer;
     base64Encode((uint8_t*)frame.samples, samplesBytes, base64Samples, base64Len);
 
+    // Build GNSS JSON fragment
+    char gnssJson[256];
+    gnssManager.toJsonFragment(gnssJson, sizeof(gnssJson));
+
     // Build JSON
     char* jsonPayload = _payloadBuffer + base64Len + 16;  // Leave space for base64
     size_t jsonLen = snprintf(jsonPayload, PAYLOAD_BUFFER_SIZE - base64Len - 16,
@@ -292,7 +297,8 @@ bool AzureIoTClient::publishFrame(const AdcFrame& frame) {
         "\"endUs\":%lld,"
         "\"sampleRate\":%.1f,"
         "\"numSamples\":%u,"
-        "\"samplesB64\":\"%s\""
+        "\"samplesB64\":\"%s\","
+        "%s"
         "}",
         AZURE_DEVICE_ID,
         frame.frameIndex,
@@ -300,7 +306,8 @@ bool AzureIoTClient::publishFrame(const AdcFrame& frame) {
         (long long)frame.endTimeUs,
         frame.sampleRateHz,
         frame.numSamples,
-        base64Samples
+        base64Samples,
+        gnssJson
     );
 
     // Publish to Azure IoT Hub telemetry topic
@@ -332,6 +339,10 @@ bool AzureIoTClient::publishStatus(bool adcOnline, const char* errorMsg) {
         }
     }
 
+    // Build GNSS JSON fragment
+    char gnssJson[256];
+    gnssManager.toJsonFragment(gnssJson, sizeof(gnssJson));
+
     // Build status JSON payload
     char* jsonPayload = _payloadBuffer;
     size_t jsonLen = snprintf(jsonPayload, PAYLOAD_BUFFER_SIZE,
@@ -344,7 +355,8 @@ bool AzureIoTClient::publishStatus(bool adcOnline, const char* errorMsg) {
         "\"lteRssi\":%d,"
         "\"freeHeap\":%u,"
         "\"publishCount\":%u,"
-        "\"errorCount\":%u"
+        "\"errorCount\":%u,"
+        "%s"
         "%s%s%s"
         "}",
         AZURE_DEVICE_ID,
@@ -355,6 +367,7 @@ bool AzureIoTClient::publishStatus(bool adcOnline, const char* errorMsg) {
         ESP.getFreeHeap(),
         _publishCount,
         _errorCount,
+        gnssJson,
         errorMsg ? ",\"error\":\"" : "",
         errorMsg ? errorMsg : "",
         errorMsg ? "\"" : ""
@@ -458,6 +471,29 @@ void AzureIoTClient::telemetryTaskFunc(void* param) {
                 client->_adcAvailable ? nullptr : "ADC not detected");
             lastStatusTime = now;
         }
+
+#if GNSS_UPDATE_INTERVAL_MS > 0
+        // Check if GNSS location needs update
+        if (gnssManager.needsUpdate()) {
+            LOG_PRINTLN("[Azure Task] GNSS update needed, disconnecting MQTT...");
+
+            // Disconnect MQTT (but remember we want to reconnect)
+            client->disconnect();
+            client->_lteConnected = false;  // Force full modem re-init after GNSS
+
+            // Acquire new GNSS fix
+            if (gnssManager.acquireFix()) {
+                const GnssLocation& loc = gnssManager.getLocation();
+                LOG_PRINTF("[Azure Task] GNSS updated: %.6f, %.6f\n",
+                          loc.latitude, loc.longitude);
+            } else {
+                LOG_PRINTLN("[Azure Task] GNSS update failed");
+            }
+
+            // Reconnection will happen on next loop iteration
+            continue;
+        }
+#endif
 
         // Process ADC frames if available
         if (cursor && client->_adcAvailable) {

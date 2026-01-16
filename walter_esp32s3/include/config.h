@@ -96,6 +96,26 @@
 // Walter uses Serial2 internally for modem communication
 
 // =============================================================================
+// GNSS CONFIGURATION
+// =============================================================================
+
+// GNSS fix timeout (seconds) - max time to wait for a fix
+#define GNSS_FIX_TIMEOUT_SEC    120
+
+// GNSS fix attempts - number of retries before giving up
+#define GNSS_FIX_MAX_ATTEMPTS   5
+
+// GNSS confidence threshold (meters) - reject fixes with higher uncertainty
+#define GNSS_MAX_CONFIDENCE     100.0f
+
+// GNSS update interval (milliseconds) - how often to refresh location
+// 30 minutes = 1800000ms. Set to 0 to disable periodic updates.
+#define GNSS_UPDATE_INTERVAL_MS 1800000
+
+// Enable GNSS at boot (recommended for first-fix)
+#define GNSS_ENABLE_AT_BOOT     1
+
+// =============================================================================
 // FREERTOS TASK CONFIGURATION
 // =============================================================================
 
