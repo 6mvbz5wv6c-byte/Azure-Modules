@@ -263,13 +263,18 @@ uint8_t ADS1256::readRegister(uint8_t reg) {
 }
 
 void ADS1256::waitDRDY() {
-    // Busy-wait for DRDY low with timeout
-    uint32_t timeout = 100000;  // ~100ms at tight loop
+    // Wait for DRDY low with timeout
+    // Use delay() which feeds the watchdog and works from any context
+    uint32_t startMs = millis();
+    const uint32_t timeoutMs = 100;  // 100ms timeout
+
     while (digitalRead(PIN_ADS_DRDY) == HIGH) {
-        if (--timeout == 0) {
+        if (millis() - startMs > timeoutMs) {
             LOG_PRINTLN("[ADS1256] DRDY timeout!");
             break;
         }
+        // Small delay feeds watchdog and prevents tight loop
+        delay(1);
     }
 }
 
