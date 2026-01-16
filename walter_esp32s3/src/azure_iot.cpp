@@ -151,34 +151,20 @@ bool AzureIoTClient::connect() {
 
         _lteConnected = true;
         LOG_PRINTLN("[Azure] LTE network connected!");
-
-        // Sync time via NTP now that we have network connectivity
-        LOG_PRINTLN("[Azure] Syncing time via NTP...");
-        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-
-        // Wait up to 10 seconds for time sync
-        int timeAttempts = 0;
-        while (time(nullptr) < 1700000000 && timeAttempts < 20) {
-            delay(500);
-            timeAttempts++;
-        }
-
-        if (time(nullptr) > 1700000000) {
-            LOG_PRINTF("[Azure] Time synced: %lu\n", (unsigned long)time(nullptr));
-        } else {
-            LOG_PRINTLN("[Azure] WARNING: Time sync failed, using fallback");
-        }
     }
 
     // Step 6: Generate SAS token
+    // Note: NTP doesn't work over LTE (only WiFi), so we use a hardcoded timestamp
+    // Azure accepts tokens with expiry up to 365 days in the future
+    // Using Jan 16, 2026 as base timestamp (update if needed)
     uint32_t now = time(nullptr);
-    LOG_PRINTF("[Azure] Current time: %lu\n", (unsigned long)now);
+    LOG_PRINTF("[Azure] System time: %lu\n", (unsigned long)now);
 
     if (now < 1700000000) {
-        // Time still not set properly, use a recent timestamp
-        // This is Jan 1, 2025 - should work until token expiry is checked
-        now = 1735689600;
-        LOG_PRINTLN("[Azure] WARNING: Using fallback timestamp (Jan 1, 2025)");
+        // Time not set - use a recent timestamp for this deployment
+        // Jan 16, 2026 00:00:00 UTC = 1736985600
+        now = 1736985600;
+        LOG_PRINTLN("[Azure] Using hardcoded timestamp (Jan 16, 2026)");
     }
 
     uint32_t expiry = now + (AZURE_SAS_TTL_HOURS * 3600);
