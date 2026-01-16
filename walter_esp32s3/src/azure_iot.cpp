@@ -161,9 +161,10 @@ bool AzureIoTClient::connect() {
     LOG_PRINTF("[Azure] SAS token generated, expires: %u\n", expiry);
 
     // Step 5: Configure TLS with Azure root CA
-    // Upload certificate to modem NVS at index 0
-    const uint8_t TLS_CERT_INDEX = 0;
-    const uint8_t TLS_PROFILE_ID = 1;
+    // Note: Certificate indexes 0-10 are RESERVED for Sequans/BlueCherry
+    // Use index 12 or higher for user certificates
+    const uint8_t TLS_CERT_INDEX = 12;
+    const uint8_t TLS_PROFILE_ID = 2;  // Profile 2 for user MQTTS
 
     if (!WalterModem::tlsWriteCredential(false, TLS_CERT_INDEX, AZURE_ROOT_CA)) {
         LOG_PRINTLN("[Azure] ERROR: Failed to write TLS certificate");
