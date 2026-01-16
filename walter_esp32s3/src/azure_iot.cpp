@@ -90,8 +90,8 @@ bool AzureIoTClient::connect() {
     // Step 1: Configure LTE modem APN
     LOG_PRINTF("[Azure] Setting APN: %s\n", LTE_APN);
 
-    if (!_modem.createPDPContext(LTE_APN, WALTER_MODEM_PDP_AUTH_PROTO_NONE)) {
-        LOG_PRINTLN("[Azure] ERROR: Failed to create PDP context");
+    if (!_modem.definePDPContext(LTE_APN, WALTER_MODEM_PDP_AUTH_PROTO_NONE)) {
+        LOG_PRINTLN("[Azure] ERROR: Failed to define PDP context");
         return false;
     }
 
@@ -149,7 +149,23 @@ bool AzureIoTClient::connect() {
     LOG_PRINTF("[Azure] SAS token generated, expires: %u\n", expiry);
 
     // Step 5: Configure TLS with Azure root CA
-    // Note: Walter modem handles TLS internally
+    // Upload certificate to modem NVS at index 0
+    const uint8_t TLS_CERT_INDEX = 0;
+    const uint8_t TLS_PROFILE_ID = 1;
+
+    if (!_modem.tlsWriteCredential(false, TLS_CERT_INDEX, AZURE_ROOT_CA)) {
+        LOG_PRINTLN("[Azure] ERROR: Failed to write TLS certificate");
+        _errorCount++;
+        return false;
+    }
+
+    // Configure TLS profile with CA validation
+    if (!_modem.tlsConfigProfile(TLS_PROFILE_ID, WALTER_MODEM_TLS_VALIDATION_CA,
+                                  WALTER_MODEM_TLS_VERSION_12, TLS_CERT_INDEX)) {
+        LOG_PRINTLN("[Azure] ERROR: Failed to configure TLS profile");
+        _errorCount++;
+        return false;
+    }
 
     // Step 6: Connect MQTT to Azure IoT Hub
     // Username format: {iothubhostname}/{device-id}/?api-version=2021-04-12
@@ -160,10 +176,15 @@ bool AzureIoTClient::connect() {
     LOG_PRINTF("[Azure] MQTT connecting to %s:%d\n", AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT);
     LOG_PRINTF("[Azure] Client ID: %s\n", AZURE_DEVICE_ID);
 
-    // Use Walter modem MQTTS connection
-    // The modem handles TLS internally with the configured certificate
-    if (!_modem.mqttConnect(AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT, AZURE_DEVICE_ID,
-                            mqttUsername, _sasToken)) {
+    // Configure MQTT client with credentials and TLS profile
+    if (!_modem.mqttConfig(AZURE_DEVICE_ID, mqttUsername, _sasToken, TLS_PROFILE_ID)) {
+        LOG_PRINTLN("[Azure] ERROR: MQTT config failed");
+        _errorCount++;
+        return false;
+    }
+
+    // Connect to MQTT broker (credentials already configured via mqttConfig)
+    if (!_modem.mqttConnect(AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT)) {
         LOG_PRINTLN("[Azure] ERROR: MQTT connection failed");
         _errorCount++;
         return false;

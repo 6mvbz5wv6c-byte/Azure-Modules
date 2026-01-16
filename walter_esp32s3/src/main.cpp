@@ -29,7 +29,8 @@
 // =============================================================================
 
 // SPI bus for ADS1256
-SPIClass adcSPI(VSPI);
+// ESP32-S3 uses FSPI (not VSPI which is ESP32-only)
+SPIClass adcSPI(FSPI);
 
 // Core components
 ADS1256         adc(adcSPI);
