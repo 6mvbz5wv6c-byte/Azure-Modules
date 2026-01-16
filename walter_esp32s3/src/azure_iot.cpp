@@ -90,7 +90,8 @@ bool AzureIoTClient::connect() {
     // Step 1: Configure LTE modem APN
     LOG_PRINTF("[Azure] Setting APN: %s\n", LTE_APN);
 
-    if (!_modem.definePDPContext(LTE_APN, WALTER_MODEM_PDP_AUTH_PROTO_NONE)) {
+    // Define PDP context: contextId=1, APN, remaining params use defaults
+    if (!_modem.definePDPContext(1, LTE_APN)) {
         LOG_PRINTLN("[Azure] ERROR: Failed to define PDP context");
         return false;
     }
