@@ -24,9 +24,9 @@ class AzureIoTClient {
 public:
     /**
      * @brief Constructor
-     * @param modem Reference to Walter modem instance
+     * Note: WalterModem is a static class, no instance needed
      */
-    AzureIoTClient(WalterModem& modem);
+    AzureIoTClient();
 
     /**
      * @brief Initialize the Azure IoT client
@@ -121,8 +121,7 @@ private:
      */
     void urlEncode(const char* input, char* output, size_t outputLen);
 
-    // Modem reference
-    WalterModem&    _modem;
+    // Note: WalterModem is accessed via static methods (WalterModem::xxx())
 
     // Connection state
     bool            _connected;

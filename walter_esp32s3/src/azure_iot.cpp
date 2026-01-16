@@ -42,9 +42,8 @@ OdQ=
 // CONSTRUCTOR
 // =============================================================================
 
-AzureIoTClient::AzureIoTClient(WalterModem& modem)
-    : _modem(modem)
-    , _connected(false)
+AzureIoTClient::AzureIoTClient()
+    : _connected(false)
     , _lteConnected(false)
     , _sasExpiry(0)
     , _publishCount(0)
@@ -91,27 +90,27 @@ bool AzureIoTClient::connect() {
     LOG_PRINTF("[Azure] Setting APN: %s\n", LTE_APN);
 
     // Define PDP context: contextId=1, APN, remaining params use defaults
-    if (!_modem.definePDPContext(1, LTE_APN)) {
+    if (!WalterModem::definePDPContext(1, LTE_APN)) {
         LOG_PRINTLN("[Azure] ERROR: Failed to define PDP context");
         return false;
     }
 
     // Step 2: Set modem to full operational state
-    if (!_modem.setOpState(WALTER_MODEM_OPSTATE_FULL)) {
+    if (!WalterModem::setOpState(WALTER_MODEM_OPSTATE_FULL)) {
         LOG_PRINTLN("[Azure] ERROR: Failed to set operational state");
         return false;
     }
 
     // Step 3: Wait for network registration
     LOG_PRINTLN("[Azure] Waiting for LTE network...");
-    WalterModemNetworkRegState regState = _modem.getNetworkRegState();
+    WalterModemNetworkRegState regState = WalterModem::getNetworkRegState();
     int attempts = 0;
     const int maxAttempts = 60;  // 30 seconds
 
     while (regState != WALTER_MODEM_NETWORK_REG_REGISTERED_HOME &&
            regState != WALTER_MODEM_NETWORK_REG_REGISTERED_ROAMING) {
         delay(500);
-        regState = _modem.getNetworkRegState();
+        regState = WalterModem::getNetworkRegState();
         attempts++;
 
         if (attempts >= maxAttempts) {
@@ -154,14 +153,14 @@ bool AzureIoTClient::connect() {
     const uint8_t TLS_CERT_INDEX = 0;
     const uint8_t TLS_PROFILE_ID = 1;
 
-    if (!_modem.tlsWriteCredential(false, TLS_CERT_INDEX, AZURE_ROOT_CA)) {
+    if (!WalterModem::tlsWriteCredential(false, TLS_CERT_INDEX, AZURE_ROOT_CA)) {
         LOG_PRINTLN("[Azure] ERROR: Failed to write TLS certificate");
         _errorCount++;
         return false;
     }
 
     // Configure TLS profile with CA validation
-    if (!_modem.tlsConfigProfile(TLS_PROFILE_ID, WALTER_MODEM_TLS_VALIDATION_CA,
+    if (!WalterModem::tlsConfigProfile(TLS_PROFILE_ID, WALTER_MODEM_TLS_VALIDATION_CA,
                                   WALTER_MODEM_TLS_VERSION_12, TLS_CERT_INDEX)) {
         LOG_PRINTLN("[Azure] ERROR: Failed to configure TLS profile");
         _errorCount++;
@@ -178,14 +177,14 @@ bool AzureIoTClient::connect() {
     LOG_PRINTF("[Azure] Client ID: %s\n", AZURE_DEVICE_ID);
 
     // Configure MQTT client with credentials and TLS profile
-    if (!_modem.mqttConfig(AZURE_DEVICE_ID, mqttUsername, _sasToken, TLS_PROFILE_ID)) {
+    if (!WalterModem::mqttConfig(AZURE_DEVICE_ID, mqttUsername, _sasToken, TLS_PROFILE_ID)) {
         LOG_PRINTLN("[Azure] ERROR: MQTT config failed");
         _errorCount++;
         return false;
     }
 
     // Connect to MQTT broker (credentials already configured via mqttConfig)
-    if (!_modem.mqttConnect(AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT)) {
+    if (!WalterModem::mqttConnect(AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT)) {
         LOG_PRINTLN("[Azure] ERROR: MQTT connection failed");
         _errorCount++;
         return false;
@@ -199,7 +198,7 @@ bool AzureIoTClient::connect() {
 
 void AzureIoTClient::disconnect() {
     if (_connected) {
-        _modem.mqttDisconnect();
+        WalterModem::mqttDisconnect();
         _connected = false;
         LOG_PRINTLN("[Azure] Disconnected from Azure IoT Hub");
     }
@@ -258,7 +257,7 @@ bool AzureIoTClient::publishFrame(const AdcFrame& frame) {
     );
 
     // Publish to Azure IoT Hub telemetry topic
-    if (_modem.mqttPublish(AZURE_TELEMETRY_TOPIC, (uint8_t*)jsonPayload, jsonLen)) {
+    if (WalterModem::mqttPublish(AZURE_TELEMETRY_TOPIC, (uint8_t*)jsonPayload, jsonLen)) {
         _publishCount++;
         return true;
     } else {
