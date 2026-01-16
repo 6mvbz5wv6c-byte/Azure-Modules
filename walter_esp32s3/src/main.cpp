@@ -240,21 +240,5 @@ void loop() {
     vTaskDelay(pdMS_TO_TICKS(100));
 }
 
-// =============================================================================
-// APP MAIN (ESP-IDF entry point)
-// =============================================================================
-
-#if !defined(ARDUINO_MAIN)
-extern "C" void app_main() {
-    // Arduino framework initialization
-    initArduino();
-
-    // Run Arduino setup
-    setup();
-
-    // Run Arduino loop
-    while (true) {
-        loop();
-    }
-}
-#endif
+// Note: Arduino framework provides app_main() automatically.
+// Do not define it here - it causes multiple definition errors.
