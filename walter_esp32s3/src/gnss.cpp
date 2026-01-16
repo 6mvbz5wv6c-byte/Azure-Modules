@@ -41,9 +41,13 @@ GnssManager::GnssManager()
 bool GnssManager::begin() {
     LOG_PRINTLN("[GNSS] Initializing GNSS subsystem...");
 
-    // Configure GNSS with high sensitivity for initial fix
-    if (!WalterModem::gnssConfig(WALTER_MODEM_GNSS_SENS_MODE_HIGH,
-                                  WALTER_MODEM_GNSS_ACQ_MODE_COLD_START)) {
+    // Set event handler for GNSS fixes
+    WalterModem::gnssSetEventHandler(gnssEventHandler, this);
+    LOG_PRINTLN("[GNSS] Event handler registered");
+
+    // Configure GNSS with default settings
+    // Note: gnssConfig() uses COLD_WARM_START mode by default
+    if (!WalterModem::gnssConfig()) {
         LOG_PRINTLN("[GNSS] WARNING: Could not configure GNSS");
         // Continue anyway - might work with defaults
     }
@@ -74,6 +78,10 @@ bool GnssManager::acquireFix(uint32_t timeoutSec, uint8_t maxAttempts) {
     if (_location.valid) {
         WalterModem::gnssConfig(WALTER_MODEM_GNSS_SENS_MODE_HIGH,
                                 WALTER_MODEM_GNSS_ACQ_MODE_HOT_START);
+    } else {
+        // Cold/warm start for first fix
+        WalterModem::gnssConfig(WALTER_MODEM_GNSS_SENS_MODE_HIGH,
+                                WALTER_MODEM_GNSS_ACQ_MODE_COLD_WARM_START);
     }
 
     bool success = false;
@@ -86,9 +94,8 @@ bool GnssManager::acquireFix(uint32_t timeoutSec, uint8_t maxAttempts) {
         _fixReceived = false;
         _fixValid = false;
 
-        // Request a GNSS fix
-        if (!WalterModem::gnssPerformAction(WALTER_MODEM_GNSS_ACTION_GET_SINGLE_FIX,
-                                            gnssEventHandler, this)) {
+        // Request a GNSS fix (uses previously configured settings)
+        if (!WalterModem::gnssPerformAction()) {
             LOG_PRINTLN("[GNSS] ERROR: Failed to request GNSS fix");
             delay(1000);
             continue;
@@ -125,7 +132,7 @@ bool GnssManager::acquireFix(uint32_t timeoutSec, uint8_t maxAttempts) {
                 _location.valid = true;
                 _location.latitude = _pendingFix.latitude;
                 _location.longitude = _pendingFix.longitude;
-                _location.altitude = _pendingFix.altitude;
+                _location.altitude = _pendingFix.height;  // WalterModem uses 'height' not 'altitude'
                 _location.confidence = _pendingFix.estimatedConfidence;
                 _location.satelliteCount = _pendingFix.satCount;
                 _location.fixTimeMs = millis();
