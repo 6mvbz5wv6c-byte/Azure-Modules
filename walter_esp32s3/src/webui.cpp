@@ -111,7 +111,8 @@ void WebUIServer::stop() {
 // =============================================================================
 
 void WebUIServer::handleRoot(AsyncWebServerRequest* request) {
-    request->send_P(200, "text/html", INDEX_HTML, INDEX_HTML_LEN);
+    // Use send() with PROGMEM string - cast to uint8_t* for API compatibility
+    request->send(200, "text/html", INDEX_HTML);
 }
 
 void WebUIServer::handleNotFound(AsyncWebServerRequest* request) {
