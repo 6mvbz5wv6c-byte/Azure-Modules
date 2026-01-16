@@ -112,10 +112,10 @@
 
 // GNSS update interval (milliseconds) - how often to refresh location
 // 30 minutes = 1800000ms. Set to 0 to disable periodic updates.
-#define GNSS_UPDATE_INTERVAL_MS 1800000
+#define GNSS_UPDATE_INTERVAL_MS 0  // Disabled for now
 
-// Enable GNSS at boot (recommended for first-fix)
-#define GNSS_ENABLE_AT_BOOT     1
+// Enable GNSS at boot (set to 0 to skip GNSS and connect LTE immediately)
+#define GNSS_ENABLE_AT_BOOT     0
 
 // =============================================================================
 // FREERTOS TASK CONFIGURATION
