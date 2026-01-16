@@ -312,11 +312,13 @@ bool AzureIoTClient::connect() {
     }
     LOG_PRINTLN("[Azure] MQTT client configured OK");
 
-    // Connect to MQTT broker
+    // Connect to MQTT broker with keepalive
+    // Azure IoT Hub default keepalive is 4 minutes (240 sec), we use 60 sec for faster detection
     LOG_PRINTLN("[Azure] Step 8b: Connecting to MQTT broker...");
-    LOG_PRINTF("[Azure] mqttConnect(%s, %d)\n", AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT);
+    LOG_PRINTF("[Azure] mqttConnect(%s, %d, keepalive=%d)\n",
+               AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT, AZURE_MQTT_KEEPALIVE);
 
-    if (!WalterModem::mqttConnect(AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT)) {
+    if (!WalterModem::mqttConnect(AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT, AZURE_MQTT_KEEPALIVE)) {
         LOG_PRINTLN("[Azure] ERROR: MQTT connection failed!");
         LOG_PRINTLN("[Azure] Possible causes:");
         LOG_PRINTLN("[Azure]   1. TLS handshake failure (wrong certificate)");
@@ -324,6 +326,7 @@ bool AzureIoTClient::connect() {
         LOG_PRINTLN("[Azure]   3. Network issue (DNS, firewall, connectivity)");
         LOG_PRINTLN("[Azure]   4. Azure IoT Hub rejected connection");
         LOG_PRINTLN("[Azure]   5. SAS token expired (check timestamp)");
+        LOG_PRINTLN("[Azure]   6. Modem internal error or timeout");
         _errorCount++;
         return false;
     }
