@@ -1,0 +1,411 @@
+/**
+ * @file ads1256.cpp
+ * @brief ADS1256 24-bit ADC driver implementation
+ *
+ * Implements hardware timer driven DRDY interrupt handling for
+ * deterministic 1000 SPS sampling without missed samples.
+ */
+
+#include "ads1256.h"
+#include <esp_timer.h>
+
+// Static member initialization
+ADS1256* ADS1256::_instance = nullptr;
+TaskHandle_t ADS1256::_taskToNotify = nullptr;
+volatile bool ADS1256::_drdyFlag = false;
+
+// =============================================================================
+// CONSTRUCTOR
+// =============================================================================
+
+ADS1256::ADS1256(SPIClass& spi)
+    : _spi(spi)
+    , _spiSettings(ADS_SPI_FREQ, MSBFIRST, ADS_SPI_MODE)
+    , _inContinuousMode(false)
+    , _currentGain(ADS_GAIN_1)
+    , _currentDrate(ADS_DRATE_1000SPS)
+    , _currentChannel(0)
+    , _sampleCount(0)
+    , _droppedCount(0)
+    , _samplingTask(nullptr)
+    , _ringBuffer(nullptr)
+    , _stopRequested(false)
+{
+    _instance = this;
+}
+
+// =============================================================================
+// INITIALIZATION
+// =============================================================================
+
+bool ADS1256::begin() {
+    // Configure GPIO pins
+    pinMode(PIN_ADS_CS, OUTPUT);
+    pinMode(PIN_ADS_DRDY, INPUT);
+    pinMode(PIN_ADS_RST, OUTPUT);
+
+    csHigh();
+
+    // Hardware reset
+    reset();
+    delay(50);
+
+    // Verify chip ID
+    uint8_t chipId = readChipID();
+    LOG_PRINTF("[ADS1256] Chip ID: 0x%02X (expected 0x03)\n", chipId);
+
+    if (chipId != 0x03) {
+        LOG_PRINTLN("[ADS1256] WARNING: Unexpected chip ID, continuing anyway");
+    }
+
+    // Default configuration
+    configure(ADS_GAIN_4, ADS_DRATE_1000SPS);
+
+    // Self-calibration
+    selfCalibrate();
+
+    LOG_PRINTLN("[ADS1256] Initialization complete");
+    return true;
+}
+
+// =============================================================================
+// CONFIGURATION
+// =============================================================================
+
+void ADS1256::configure(uint8_t gain, uint8_t drate) {
+    _currentGain = gain;
+    _currentDrate = drate;
+
+    waitDRDY();
+
+    // Write STATUS, MUX, ADCON, DRATE registers (0x00-0x03)
+    csLow();
+    _spi.beginTransaction(_spiSettings);
+
+    _spi.transfer(ADS_CMD_WREG | ADS_REG_STATUS);  // Start at STATUS
+    _spi.transfer(0x03);                            // Write 4 registers
+
+    // STATUS: Buffer disabled, auto-cal disabled, LSB first
+    _spi.transfer(0x04);
+
+    // MUX: Will be set by setDiffChannel
+    _spi.transfer(ADS_MUX_DIFF_0_1);
+
+    // ADCON: Clock out disabled, sensor detect off, PGA gain
+    _spi.transfer(gain & 0x07);
+
+    // DRATE: Data rate
+    _spi.transfer(drate);
+
+    _spi.endTransaction();
+    csHigh();
+
+    delayMicroseconds(100);
+
+    LOG_PRINTF("[ADS1256] Configured: gain=%d, drate=0x%02X\n", gain, drate);
+}
+
+void ADS1256::setDiffChannel(uint8_t channel) {
+    _currentChannel = channel;
+
+    uint8_t mux;
+    switch (channel) {
+        case 0: mux = ADS_MUX_DIFF_0_1; break;
+        case 1: mux = ADS_MUX_DIFF_2_3; break;
+        case 2: mux = ADS_MUX_DIFF_4_5; break;
+        case 3: mux = ADS_MUX_DIFF_6_7; break;
+        default: mux = ADS_MUX_DIFF_0_1; break;
+    }
+
+    writeRegister(ADS_REG_MUX, mux);
+    delayMicroseconds(10);
+}
+
+// =============================================================================
+// CONTINUOUS MODE
+// =============================================================================
+
+void ADS1256::startContinuous() {
+    if (_inContinuousMode) return;
+
+    // Stop any previous continuous mode
+    writeCommand(ADS_CMD_SDATAC);
+    delayMicroseconds(10);
+
+    // Sync and wakeup to start conversions
+    writeCommand(ADS_CMD_SYNC);
+    delayMicroseconds(10);
+    writeCommand(ADS_CMD_WAKEUP);
+    delayMicroseconds(10);
+
+    // Enter continuous read mode
+    writeCommand(ADS_CMD_RDATAC);
+
+    _inContinuousMode = true;
+    LOG_PRINTLN("[ADS1256] Continuous mode started");
+}
+
+void ADS1256::stopContinuous() {
+    if (!_inContinuousMode) return;
+
+    writeCommand(ADS_CMD_SDATAC);
+    _inContinuousMode = false;
+    LOG_PRINTLN("[ADS1256] Continuous mode stopped");
+}
+
+// =============================================================================
+// SAMPLE READING
+// =============================================================================
+
+int32_t ADS1256::readSample() {
+    waitDRDY();
+
+    csLow();
+    _spi.beginTransaction(_spiSettings);
+
+    // In RDATAC mode, just clock out the data (no RDATA command needed)
+    // In normal mode, we'd send RDATA first
+    if (!_inContinuousMode) {
+        _spi.transfer(ADS_CMD_RDATA);
+        delayMicroseconds(7);  // t6 delay
+    }
+
+    // Read 3 bytes (24-bit data, MSB first)
+    uint8_t b0 = _spi.transfer(0x00);
+    uint8_t b1 = _spi.transfer(0x00);
+    uint8_t b2 = _spi.transfer(0x00);
+
+    _spi.endTransaction();
+    csHigh();
+
+    // Combine bytes into 24-bit value
+    int32_t value = ((int32_t)b0 << 16) | ((int32_t)b1 << 8) | b2;
+
+    // Sign extend from 24-bit to 32-bit (two's complement)
+    if (value & 0x800000) {
+        value -= 0x1000000;
+    }
+
+    _sampleCount++;
+    return value;
+}
+
+uint8_t ADS1256::readChipID() {
+    waitDRDY();
+
+    uint8_t status = readRegister(ADS_REG_STATUS);
+    return (status >> 4) & 0x0F;
+}
+
+void ADS1256::selfCalibrate() {
+    waitDRDY();
+    writeCommand(ADS_CMD_SELFCAL);
+    delay(100);  // Wait for calibration
+    waitDRDY();
+    LOG_PRINTLN("[ADS1256] Self-calibration complete");
+}
+
+void ADS1256::reset() {
+    digitalWrite(PIN_ADS_RST, HIGH);
+    delay(10);
+    digitalWrite(PIN_ADS_RST, LOW);
+    delay(10);
+    digitalWrite(PIN_ADS_RST, HIGH);
+    delay(50);
+}
+
+bool ADS1256::isDataReady() {
+    return digitalRead(PIN_ADS_DRDY) == LOW;
+}
+
+// =============================================================================
+// LOW-LEVEL SPI
+// =============================================================================
+
+void ADS1256::csLow() {
+    digitalWrite(PIN_ADS_CS, LOW);
+}
+
+void ADS1256::csHigh() {
+    digitalWrite(PIN_ADS_CS, HIGH);
+}
+
+void ADS1256::writeCommand(uint8_t cmd) {
+    csLow();
+    _spi.beginTransaction(_spiSettings);
+    _spi.transfer(cmd);
+    _spi.endTransaction();
+    csHigh();
+}
+
+void ADS1256::writeRegister(uint8_t reg, uint8_t value) {
+    waitDRDY();
+    csLow();
+    _spi.beginTransaction(_spiSettings);
+    _spi.transfer(ADS_CMD_WREG | (reg & 0x0F));
+    _spi.transfer(0x00);  // Write 1 register
+    _spi.transfer(value);
+    _spi.endTransaction();
+    csHigh();
+    delayMicroseconds(10);
+}
+
+uint8_t ADS1256::readRegister(uint8_t reg) {
+    csLow();
+    _spi.beginTransaction(_spiSettings);
+    _spi.transfer(ADS_CMD_RREG | (reg & 0x0F));
+    _spi.transfer(0x00);  // Read 1 register
+    delayMicroseconds(10);
+    uint8_t value = _spi.transfer(0x00);
+    _spi.endTransaction();
+    csHigh();
+    return value;
+}
+
+void ADS1256::waitDRDY() {
+    // Busy-wait for DRDY low with timeout
+    uint32_t timeout = 100000;  // ~100ms at tight loop
+    while (digitalRead(PIN_ADS_DRDY) == HIGH) {
+        if (--timeout == 0) {
+            LOG_PRINTLN("[ADS1256] DRDY timeout!");
+            break;
+        }
+    }
+}
+
+// =============================================================================
+// INTERRUPT-DRIVEN SAMPLING TASK
+// =============================================================================
+
+void IRAM_ATTR ADS1256::drdyISR() {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    _drdyFlag = true;
+
+    // Notify the sampling task
+    if (_taskToNotify != nullptr) {
+        vTaskNotifyGiveFromISR(_taskToNotify, &xHigherPriorityTaskWoken);
+    }
+
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+void ADS1256::startSamplingTask(AdcRingBuffer* ringBuffer, TaskHandle_t* taskHandle) {
+    _ringBuffer = ringBuffer;
+    _stopRequested = false;
+
+    // Create the sampling task
+    xTaskCreatePinnedToCore(
+        samplingTaskFunc,
+        "ADC_Sample",
+        TASK_STACK_ADC,
+        this,
+        TASK_PRIORITY_ADC,
+        &_samplingTask,
+        TASK_CORE_ADC
+    );
+
+    if (taskHandle) {
+        *taskHandle = _samplingTask;
+    }
+
+    // Set up the task to be notified by ISR
+    _taskToNotify = _samplingTask;
+
+    // Attach interrupt to DRDY pin (falling edge)
+    attachInterrupt(digitalPinToInterrupt(PIN_ADS_DRDY), drdyISR, FALLING);
+
+    LOG_PRINTLN("[ADS1256] Sampling task started");
+}
+
+void ADS1256::stopSamplingTask() {
+    _stopRequested = true;
+    detachInterrupt(digitalPinToInterrupt(PIN_ADS_DRDY));
+    _taskToNotify = nullptr;
+
+    if (_samplingTask) {
+        // Wait for task to terminate
+        vTaskDelay(pdMS_TO_TICKS(100));
+        _samplingTask = nullptr;
+    }
+
+    stopContinuous();
+    LOG_PRINTLN("[ADS1256] Sampling task stopped");
+}
+
+void ADS1256::samplingTaskFunc(void* param) {
+    ADS1256* adc = static_cast<ADS1256*>(param);
+
+    LOG_PRINTLN("[ADC Task] Starting sampling loop");
+
+    // Configure for 1000 SPS differential channel 0
+    adc->configure(ADS_GAIN_4, ADS_DRATE_1000SPS);
+    adc->setDiffChannel(0);
+    adc->startContinuous();
+
+    AdcFrame frame;
+    frame.sampleRateHz = SAMPLE_RATE_HZ;
+    frame.numSamples = FRAME_SIZE;
+
+    uint32_t sampleIndex = 0;
+    uint32_t frameIndex = 0;
+    int64_t frameStartUs = 0;
+    const int64_t samplePeriodUs = 1000000 / SAMPLE_RATE_HZ;
+
+    // Get initial timestamp
+    frameStartUs = esp_timer_get_time();
+
+    while (!adc->_stopRequested) {
+        // Wait for DRDY interrupt (task notification) or timeout
+        uint32_t notifyValue = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
+
+        if (notifyValue > 0 || adc->isDataReady()) {
+            // Read sample immediately
+            adc->csLow();
+            adc->_spi.beginTransaction(adc->_spiSettings);
+
+            uint8_t b0 = adc->_spi.transfer(0x00);
+            uint8_t b1 = adc->_spi.transfer(0x00);
+            uint8_t b2 = adc->_spi.transfer(0x00);
+
+            adc->_spi.endTransaction();
+            adc->csHigh();
+
+            // Convert to signed 32-bit
+            int32_t value = ((int32_t)b0 << 16) | ((int32_t)b1 << 8) | b2;
+            if (value & 0x800000) {
+                value -= 0x1000000;
+            }
+
+            // Store in frame buffer
+            frame.samples[sampleIndex++] = value;
+            adc->_sampleCount++;
+
+            _drdyFlag = false;
+
+            // Check if frame is complete
+            if (sampleIndex >= FRAME_SIZE) {
+                // Calculate timestamps for this frame
+                int64_t now = esp_timer_get_time();
+                frame.frameIndex = frameIndex++;
+                frame.startTimeUs = frameStartUs;
+                frame.endTimeUs = frameStartUs + (FRAME_SIZE * samplePeriodUs);
+
+                // Push frame to ring buffer
+                if (adc->_ringBuffer) {
+                    adc->_ringBuffer->push(frame);
+                }
+
+                // Prepare for next frame
+                frameStartUs = frame.endTimeUs;
+                sampleIndex = 0;
+
+                // Yield briefly to allow other tasks to run
+                taskYIELD();
+            }
+        }
+    }
+
+    LOG_PRINTLN("[ADC Task] Sampling loop exited");
+    vTaskDelete(nullptr);
+}
