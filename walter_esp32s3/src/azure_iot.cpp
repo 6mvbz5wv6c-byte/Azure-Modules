@@ -87,22 +87,33 @@ bool AzureIoTClient::begin() {
 bool AzureIoTClient::connect() {
     LOG_PRINTLN("[Azure] Connecting to Azure IoT Hub...");
 
-    // Step 1: Configure LTE modem APN
-    LOG_PRINTF("[Azure] Setting APN: %s\n", LTE_APN);
+    // Step 1: Set modem to NO_RF state (required before configuring PDP context)
+    LOG_PRINTLN("[Azure] Setting modem to NO_RF state...");
+    if (!WalterModem::setOpState(WALTER_MODEM_OPSTATE_NO_RF)) {
+        LOG_PRINTLN("[Azure] ERROR: Failed to set NO_RF state");
+        return false;
+    }
 
-    // Define PDP context: contextId=1, APN, remaining params use defaults
+    // Step 2: Define PDP context with APN
+    LOG_PRINTF("[Azure] Defining PDP context with APN: %s\n", LTE_APN);
     if (!WalterModem::definePDPContext(1, LTE_APN)) {
         LOG_PRINTLN("[Azure] ERROR: Failed to define PDP context");
         return false;
     }
+    LOG_PRINTLN("[Azure] PDP context defined");
 
-    // Step 2: Set modem to full operational state
+    // Step 3: Set modem to full operational state
+    LOG_PRINTLN("[Azure] Setting modem to FULL state...");
     if (!WalterModem::setOpState(WALTER_MODEM_OPSTATE_FULL)) {
         LOG_PRINTLN("[Azure] ERROR: Failed to set operational state");
         return false;
     }
 
-    // Step 3: Wait for network registration
+    // Step 4: Configure network selection mode
+    LOG_PRINTLN("[Azure] Setting automatic network selection...");
+    WalterModem::setNetworkSelectionMode(WALTER_MODEM_NETWORK_SEL_MODE_AUTOMATIC);
+
+    // Step 5: Wait for network registration
     LOG_PRINTLN("[Azure] Waiting for LTE network...");
     WalterModemNetworkRegState regState = WalterModem::getNetworkRegState();
     int attempts = 0;
