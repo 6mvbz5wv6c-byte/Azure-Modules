@@ -100,10 +100,12 @@
 // =============================================================================
 
 // GNSS fix timeout (seconds) - max time to wait for a fix
-#define GNSS_FIX_TIMEOUT_SEC    120
+// Cold start can take 30-60+ seconds, up to 12+ minutes in poor conditions
+#define GNSS_FIX_TIMEOUT_SEC    180  // 3 minutes total
 
 // GNSS fix attempts - number of retries before giving up
-#define GNSS_FIX_MAX_ATTEMPTS   5
+// Each attempt will get at least 30 seconds
+#define GNSS_FIX_MAX_ATTEMPTS   3
 
 // GNSS confidence threshold (meters) - reject fixes with higher uncertainty
 #define GNSS_MAX_CONFIDENCE     100.0f
