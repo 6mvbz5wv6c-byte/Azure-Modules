@@ -87,62 +87,98 @@ bool AzureIoTClient::begin() {
 bool AzureIoTClient::connect() {
     LOG_PRINTLN("[Azure] Connecting to Azure IoT Hub...");
 
-    // Step 1: Set modem to NO_RF state (required before configuring PDP context)
-    LOG_PRINTLN("[Azure] Setting modem to NO_RF state...");
-    if (!WalterModem::setOpState(WALTER_MODEM_OPSTATE_NO_RF)) {
-        LOG_PRINTLN("[Azure] ERROR: Failed to set NO_RF state");
-        return false;
+    // Check if LTE is already connected - skip modem init if so
+    if (_lteConnected) {
+        WalterModemNetworkRegState regState = WalterModem::getNetworkRegState();
+        if (regState == WALTER_MODEM_NETWORK_REG_REGISTERED_HOME ||
+            regState == WALTER_MODEM_NETWORK_REG_REGISTERED_ROAMING) {
+            LOG_PRINTLN("[Azure] LTE already connected, skipping modem init");
+        } else {
+            LOG_PRINTLN("[Azure] LTE was connected but lost, re-initializing...");
+            _lteConnected = false;
+        }
     }
 
-    // Step 2: Define PDP context with APN
-    LOG_PRINTF("[Azure] Defining PDP context with APN: %s\n", LTE_APN);
-    if (!WalterModem::definePDPContext(1, LTE_APN)) {
-        LOG_PRINTLN("[Azure] ERROR: Failed to define PDP context");
-        return false;
-    }
-    LOG_PRINTLN("[Azure] PDP context defined");
-
-    // Step 3: Set modem to full operational state
-    LOG_PRINTLN("[Azure] Setting modem to FULL state...");
-    if (!WalterModem::setOpState(WALTER_MODEM_OPSTATE_FULL)) {
-        LOG_PRINTLN("[Azure] ERROR: Failed to set operational state");
-        return false;
-    }
-
-    // Step 4: Configure network selection mode
-    LOG_PRINTLN("[Azure] Setting automatic network selection...");
-    WalterModem::setNetworkSelectionMode(WALTER_MODEM_NETWORK_SEL_MODE_AUTOMATIC);
-
-    // Step 5: Wait for network registration
-    LOG_PRINTLN("[Azure] Waiting for LTE network...");
-    WalterModemNetworkRegState regState = WalterModem::getNetworkRegState();
-    int attempts = 0;
-    const int maxAttempts = 60;  // 30 seconds
-
-    while (regState != WALTER_MODEM_NETWORK_REG_REGISTERED_HOME &&
-           regState != WALTER_MODEM_NETWORK_REG_REGISTERED_ROAMING) {
-        delay(500);
-        regState = WalterModem::getNetworkRegState();
-        attempts++;
-
-        if (attempts >= maxAttempts) {
-            LOG_PRINTLN("[Azure] ERROR: Network registration timeout");
+    // Only do full modem init if not already connected
+    if (!_lteConnected) {
+        // Step 1: Set modem to NO_RF state (required before configuring PDP context)
+        LOG_PRINTLN("[Azure] Setting modem to NO_RF state...");
+        if (!WalterModem::setOpState(WALTER_MODEM_OPSTATE_NO_RF)) {
+            LOG_PRINTLN("[Azure] ERROR: Failed to set NO_RF state");
             return false;
         }
 
-        if (attempts % 10 == 0) {
-            LOG_PRINTF("[Azure] Still waiting for network... (%d/%d)\n", attempts, maxAttempts);
+        // Step 2: Define PDP context with APN
+        LOG_PRINTF("[Azure] Defining PDP context with APN: %s\n", LTE_APN);
+        if (!WalterModem::definePDPContext(1, LTE_APN)) {
+            LOG_PRINTLN("[Azure] ERROR: Failed to define PDP context");
+            return false;
+        }
+        LOG_PRINTLN("[Azure] PDP context defined");
+
+        // Step 3: Set modem to full operational state
+        LOG_PRINTLN("[Azure] Setting modem to FULL state...");
+        if (!WalterModem::setOpState(WALTER_MODEM_OPSTATE_FULL)) {
+            LOG_PRINTLN("[Azure] ERROR: Failed to set operational state");
+            return false;
+        }
+
+        // Step 4: Configure network selection mode
+        LOG_PRINTLN("[Azure] Setting automatic network selection...");
+        WalterModem::setNetworkSelectionMode(WALTER_MODEM_NETWORK_SEL_MODE_AUTOMATIC);
+
+        // Step 5: Wait for network registration
+        LOG_PRINTLN("[Azure] Waiting for LTE network...");
+        WalterModemNetworkRegState regState = WalterModem::getNetworkRegState();
+        int attempts = 0;
+        const int maxAttempts = 60;  // 30 seconds
+
+        while (regState != WALTER_MODEM_NETWORK_REG_REGISTERED_HOME &&
+               regState != WALTER_MODEM_NETWORK_REG_REGISTERED_ROAMING) {
+            delay(500);
+            regState = WalterModem::getNetworkRegState();
+            attempts++;
+
+            if (attempts >= maxAttempts) {
+                LOG_PRINTLN("[Azure] ERROR: Network registration timeout");
+                return false;
+            }
+
+            if (attempts % 10 == 0) {
+                LOG_PRINTF("[Azure] Still waiting for network... (%d/%d)\n", attempts, maxAttempts);
+            }
+        }
+
+        _lteConnected = true;
+        LOG_PRINTLN("[Azure] LTE network connected!");
+
+        // Sync time via NTP now that we have network connectivity
+        LOG_PRINTLN("[Azure] Syncing time via NTP...");
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+        // Wait up to 10 seconds for time sync
+        int timeAttempts = 0;
+        while (time(nullptr) < 1700000000 && timeAttempts < 20) {
+            delay(500);
+            timeAttempts++;
+        }
+
+        if (time(nullptr) > 1700000000) {
+            LOG_PRINTF("[Azure] Time synced: %lu\n", (unsigned long)time(nullptr));
+        } else {
+            LOG_PRINTLN("[Azure] WARNING: Time sync failed, using fallback");
         }
     }
 
-    _lteConnected = true;
-    LOG_PRINTLN("[Azure] LTE network connected!");
-
-    // Step 4: Generate SAS token
+    // Step 6: Generate SAS token
     uint32_t now = time(nullptr);
-    if (now < 1000000000) {
-        // Time not set, use modem time or estimate
-        now = 1704067200;  // Jan 1, 2024 as fallback
+    LOG_PRINTF("[Azure] Current time: %lu\n", (unsigned long)now);
+
+    if (now < 1700000000) {
+        // Time still not set properly, use a recent timestamp
+        // This is Jan 1, 2025 - should work until token expiry is checked
+        now = 1735689600;
+        LOG_PRINTLN("[Azure] WARNING: Using fallback timestamp (Jan 1, 2025)");
     }
 
     uint32_t expiry = now + (AZURE_SAS_TTL_HOURS * 3600);
@@ -152,51 +188,62 @@ bool AzureIoTClient::connect() {
     snprintf(resourceUri, sizeof(resourceUri), "%s/devices/%s",
              AZURE_IOT_HUB_HOST, AZURE_DEVICE_ID);
 
+    LOG_PRINTF("[Azure] Generating SAS token for: %s\n", resourceUri);
+
     if (!generateSasToken(resourceUri, AZURE_SAS_KEY, expiry, _sasToken, sizeof(_sasToken))) {
         LOG_PRINTLN("[Azure] ERROR: Failed to generate SAS token");
         return false;
     }
 
     _sasExpiry = expiry;
-    LOG_PRINTF("[Azure] SAS token generated, expires: %u\n", expiry);
+    LOG_PRINTF("[Azure] SAS token generated, expires: %u (in %u hours)\n", expiry, AZURE_SAS_TTL_HOURS);
 
-    // Step 5: Configure TLS with Azure root CA
+    // Step 7: Configure TLS with Azure root CA
     // Note: Certificate indexes 0-10 are RESERVED for Sequans/BlueCherry
     // Use index 12 or higher for user certificates
     const uint8_t TLS_CERT_INDEX = 12;
     const uint8_t TLS_PROFILE_ID = 2;  // Profile 2 for user MQTTS
 
+    LOG_PRINTLN("[Azure] Writing TLS certificate to modem...");
     if (!WalterModem::tlsWriteCredential(false, TLS_CERT_INDEX, AZURE_ROOT_CA)) {
         LOG_PRINTLN("[Azure] ERROR: Failed to write TLS certificate");
         _errorCount++;
         return false;
     }
+    LOG_PRINTLN("[Azure] TLS certificate written OK");
 
     // Configure TLS profile with CA validation
+    LOG_PRINTF("[Azure] Configuring TLS profile %d with cert index %d...\n", TLS_PROFILE_ID, TLS_CERT_INDEX);
     if (!WalterModem::tlsConfigProfile(TLS_PROFILE_ID, WALTER_MODEM_TLS_VALIDATION_CA,
                                   WALTER_MODEM_TLS_VERSION_12, TLS_CERT_INDEX)) {
         LOG_PRINTLN("[Azure] ERROR: Failed to configure TLS profile");
         _errorCount++;
         return false;
     }
+    LOG_PRINTLN("[Azure] TLS profile configured OK");
 
-    // Step 6: Connect MQTT to Azure IoT Hub
+    // Step 8: Connect MQTT to Azure IoT Hub
     // Username format: {iothubhostname}/{device-id}/?api-version=2021-04-12
     char mqttUsername[256];
     snprintf(mqttUsername, sizeof(mqttUsername), "%s/%s/?api-version=2021-04-12",
              AZURE_IOT_HUB_HOST, AZURE_DEVICE_ID);
 
-    LOG_PRINTF("[Azure] MQTT connecting to %s:%d\n", AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT);
-    LOG_PRINTF("[Azure] Client ID: %s\n", AZURE_DEVICE_ID);
+    LOG_PRINTF("[Azure] MQTT broker: %s:%d\n", AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT);
+    LOG_PRINTF("[Azure] MQTT client ID: %s\n", AZURE_DEVICE_ID);
+    LOG_PRINTF("[Azure] MQTT username: %s\n", mqttUsername);
+    LOG_PRINTF("[Azure] MQTT password (SAS): %.50s...\n", _sasToken);
 
     // Configure MQTT client with credentials and TLS profile
+    LOG_PRINTLN("[Azure] Configuring MQTT client...");
     if (!WalterModem::mqttConfig(AZURE_DEVICE_ID, mqttUsername, _sasToken, TLS_PROFILE_ID)) {
         LOG_PRINTLN("[Azure] ERROR: MQTT config failed");
         _errorCount++;
         return false;
     }
+    LOG_PRINTLN("[Azure] MQTT client configured OK");
 
-    // Connect to MQTT broker (credentials already configured via mqttConfig)
+    // Connect to MQTT broker
+    LOG_PRINTLN("[Azure] Connecting to MQTT broker...");
     if (!WalterModem::mqttConnect(AZURE_IOT_HUB_HOST, AZURE_MQTT_PORT)) {
         LOG_PRINTLN("[Azure] ERROR: MQTT connection failed");
         _errorCount++;
@@ -213,7 +260,8 @@ void AzureIoTClient::disconnect() {
     if (_connected) {
         WalterModem::mqttDisconnect();
         _connected = false;
-        LOG_PRINTLN("[Azure] Disconnected from Azure IoT Hub");
+        // Note: Don't reset _lteConnected - LTE may still be active
+        LOG_PRINTLN("[Azure] Disconnected from MQTT (LTE still active)");
     }
 }
 
