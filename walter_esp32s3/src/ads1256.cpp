@@ -22,6 +22,7 @@ ADS1256::ADS1256(SPIClass& spi)
     : _spi(spi)
     , _spiSettings(ADS_SPI_FREQ, MSBFIRST, ADS_SPI_MODE)
     , _inContinuousMode(false)
+    , _chipDetected(false)
     , _currentGain(ADS_GAIN_1)
     , _currentDrate(ADS_DRATE_1000SPS)
     , _currentChannel(0)
@@ -41,7 +42,7 @@ ADS1256::ADS1256(SPIClass& spi)
 bool ADS1256::begin() {
     // Configure GPIO pins
     pinMode(PIN_ADS_CS, OUTPUT);
-    pinMode(PIN_ADS_DRDY, INPUT);
+    pinMode(PIN_ADS_DRDY, INPUT_PULLUP);  // Use pullup to prevent floating when no chip
     pinMode(PIN_ADS_RST, OUTPUT);
 
     csHigh();
@@ -55,8 +56,12 @@ bool ADS1256::begin() {
     LOG_PRINTF("[ADS1256] Chip ID: 0x%02X (expected 0x03)\n", chipId);
 
     if (chipId != 0x03) {
-        LOG_PRINTLN("[ADS1256] WARNING: Unexpected chip ID, continuing anyway");
+        LOG_PRINTLN("[ADS1256] WARNING: Chip not detected - sampling disabled");
+        _chipDetected = false;
+        return false;
     }
+
+    _chipDetected = true;
 
     // Default configuration
     configure(ADS_GAIN_4, ADS_DRATE_1000SPS);
@@ -296,6 +301,15 @@ void IRAM_ATTR ADS1256::drdyISR() {
 }
 
 void ADS1256::startSamplingTask(AdcRingBuffer* ringBuffer, TaskHandle_t* taskHandle) {
+    // Don't start sampling if chip not detected
+    if (!_chipDetected) {
+        LOG_PRINTLN("[ADS1256] Sampling task NOT started - no chip detected");
+        if (taskHandle) {
+            *taskHandle = nullptr;
+        }
+        return;
+    }
+
     _ringBuffer = ringBuffer;
     _stopRequested = false;
 

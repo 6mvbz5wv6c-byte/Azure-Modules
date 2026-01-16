@@ -130,6 +130,7 @@ private:
 
     // State
     bool            _inContinuousMode;
+    bool            _chipDetected;
     uint8_t         _currentGain;
     uint8_t         _currentDrate;
     uint8_t         _currentChannel;
