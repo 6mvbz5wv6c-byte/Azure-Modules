@@ -88,7 +88,7 @@
 // =============================================================================
 
 // APN Configuration - Adjust for your carrier
-#define LTE_APN                 "iot.1nce.net"  // Example: 1NCE IoT
+#define LTE_APN                 "osc"  // Example: 1NCE IoT
 #define LTE_APN_USER            ""
 #define LTE_APN_PASS            ""
 
