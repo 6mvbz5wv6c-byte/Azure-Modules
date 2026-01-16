@@ -49,15 +49,26 @@ class AdcRingBuffer {
 public:
     static constexpr size_t CAPACITY = RING_BUFFER_FRAMES;
 
-    AdcRingBuffer() : _head(0), _frameCount(0), _droppedFrames(0) {
-        _mutex = xSemaphoreCreateMutex();
-        _newFrameSem = xSemaphoreCreateBinary();
+    AdcRingBuffer() : _head(0), _frameCount(0), _droppedFrames(0), _mutex(nullptr), _newFrameSem(nullptr) {
+        // Don't create FreeRTOS objects here - called before scheduler starts!
         memset(_frames, 0, sizeof(_frames));
     }
 
     ~AdcRingBuffer() {
         if (_mutex) vSemaphoreDelete(_mutex);
         if (_newFrameSem) vSemaphoreDelete(_newFrameSem);
+    }
+
+    /**
+     * @brief Initialize FreeRTOS objects - call from setup() after scheduler starts
+     */
+    void begin() {
+        if (!_mutex) {
+            _mutex = xSemaphoreCreateMutex();
+        }
+        if (!_newFrameSem) {
+            _newFrameSem = xSemaphoreCreateBinary();
+        }
     }
 
     /**

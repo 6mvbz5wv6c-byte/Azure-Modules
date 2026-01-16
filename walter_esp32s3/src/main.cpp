@@ -130,6 +130,10 @@ void setup() {
     bootTime = millis();
     printSystemInfo();
 
+    // Initialize ring buffer (creates FreeRTOS semaphores - must be after scheduler starts)
+    LOG_PRINTLN("[Setup] Initializing ring buffer...");
+    ringBuffer.begin();
+
     // Initialize SPI for ADS1256
     LOG_PRINTLN("[Setup] Initializing SPI...");
     adcSPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, PIN_ADS_CS);
