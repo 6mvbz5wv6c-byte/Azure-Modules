@@ -42,7 +42,10 @@
 #define PIN_ADS_PDWN            -1          // Not connected (tied high)
 
 // SPI Configuration
-#define ADS_SPI_FREQ            2000000     // 2 MHz SPI clock (ADS1256 max ~2.5MHz)
+// NOTE: ADS1256 datasheet says max ~2.5MHz, but real-world wiring often
+// requires lower speeds. If chip ID reads wrong (0x0A instead of 0x03),
+// try lowering this value. 500kHz-1MHz is usually reliable.
+#define ADS_SPI_FREQ            1000000     // 1 MHz SPI clock (conservative)
 #define ADS_SPI_MODE            SPI_MODE1   // CPOL=0, CPHA=1
 
 // =============================================================================

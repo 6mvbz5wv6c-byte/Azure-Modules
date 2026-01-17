@@ -43,6 +43,7 @@ bool ADS1256::begin() {
     // Log pin configuration
     LOG_PRINTF("[ADS1256] Pins: CS=%d, DRDY=%d, RST=%d, SCK=%d, MISO=%d, MOSI=%d\n",
                PIN_ADS_CS, PIN_ADS_DRDY, PIN_ADS_RST, PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI);
+    LOG_PRINTF("[ADS1256] SPI frequency: %d Hz\n", ADS_SPI_FREQ);
 
     // Configure GPIO pins
     pinMode(PIN_ADS_CS, OUTPUT);
@@ -56,29 +57,67 @@ bool ADS1256::begin() {
     delay(100);  // Wait longer after reset
 
     // Check DRDY pin state
+    int drdyState = digitalRead(PIN_ADS_DRDY);
     LOG_PRINTF("[ADS1256] DRDY state after reset: %s\n",
-               digitalRead(PIN_ADS_DRDY) == LOW ? "LOW (ready)" : "HIGH (busy)");
+               drdyState == LOW ? "LOW (ready)" : "HIGH (busy)");
 
-    // Verify chip ID
-    uint8_t chipId = readChipID();
+    // If DRDY stuck HIGH, chip may not be present or wiring issue
+    if (drdyState == HIGH) {
+        LOG_PRINTLN("[ADS1256] WARNING: DRDY stuck HIGH - possible wiring issue");
+    }
+
+    // Read chip ID multiple times to check SPI stability
+    LOG_PRINTLN("[ADS1256] Reading chip ID (3 attempts)...");
+    uint8_t chipIds[3];
+    for (int i = 0; i < 3; i++) {
+        chipIds[i] = readChipID();
+        LOG_PRINTF("[ADS1256]   Attempt %d: ID=0x%02X\n", i+1, chipIds[i]);
+        delay(10);
+    }
+
+    // Check consistency
+    bool consistent = (chipIds[0] == chipIds[1] && chipIds[1] == chipIds[2]);
+    uint8_t chipId = chipIds[0];
+
+    if (!consistent) {
+        LOG_PRINTLN("[ADS1256] WARNING: Inconsistent chip ID reads - SPI may be unreliable");
+        LOG_PRINTLN("[ADS1256]   Try lowering SPI speed (ADS_SPI_FREQ in config.h)");
+        LOG_PRINTLN("[ADS1256]   Or check wiring for noise/bad connections");
+    }
+
     LOG_PRINTF("[ADS1256] Chip ID: 0x%02X (expected 0x03)\n", chipId);
 
     if (chipId != 0x03) {
-        LOG_PRINTLN("[ADS1256] WARNING: Chip not detected - sampling disabled");
-        _chipDetected = false;
-        return false;
+        LOG_PRINTLN("[ADS1256] WARNING: Wrong chip ID detected!");
+        LOG_PRINTLN("[ADS1256]   Possible causes:");
+        LOG_PRINTLN("[ADS1256]   - SPI speed too high for wiring (try 500kHz)");
+        LOG_PRINTLN("[ADS1256]   - MISO/MOSI swapped");
+        LOG_PRINTLN("[ADS1256]   - Bad solder joint or loose connection");
+        LOG_PRINTLN("[ADS1256]   - Chip not powered (check AVDD/DVDD)");
+        LOG_PRINTLN("[ADS1256]   - Different/incompatible ADC chip");
+
+        // Try anyway if we got some response (not 0xFF or 0x00)
+        if (chipId != 0x00 && chipId != 0xFF && chipId != 0x0F) {
+            LOG_PRINTLN("[ADS1256] Attempting initialization anyway (debug mode)...");
+            _chipDetected = true;  // Try to use it
+        } else {
+            LOG_PRINTLN("[ADS1256] No valid response - chip not present or not powered");
+            _chipDetected = false;
+            return false;
+        }
+    } else {
+        _chipDetected = true;
     }
 
-    _chipDetected = true;
-
     // Default configuration
+    LOG_PRINTLN("[ADS1256] Configuring ADC...");
     configure(ADS_GAIN_4, ADS_DRATE_1000SPS);
 
     // Self-calibration
     selfCalibrate();
 
     LOG_PRINTLN("[ADS1256] Initialization complete");
-    return true;
+    return (chipId == 0x03);  // Return true only if correct chip ID
 }
 
 // =============================================================================

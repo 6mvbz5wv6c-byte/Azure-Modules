@@ -25,6 +25,9 @@
 #include "webui.h"
 #include "gnss.h"
 
+// External diagnostic function from ads1256_test.cpp
+extern void runAdsDiagnostic();
+
 // =============================================================================
 // GLOBAL OBJECTS (pointers - allocated in setup() to avoid constructor issues)
 // =============================================================================
@@ -271,11 +274,25 @@ void loop() {
                 ESP.restart();
                 break;
 
+            case 'd':
+            case 'D':
+                LOG_PRINTLN("\n=== Running ADS1256 Diagnostic ===");
+                LOG_PRINTLN("This will test multiple SPI speeds and read all registers.");
+                LOG_PRINTLN("WARNING: This may disrupt normal operation!\n");
+                // Stop ADC task before diagnostic
+                if (adc) {
+                    adc->stopSamplingTask();
+                }
+                runAdsDiagnostic();
+                // Note: runAdsDiagnostic() loops forever, restart needed after
+                break;
+
             case 'h':
             case 'H':
             case '?':
                 LOG_PRINTLN("\n=== Commands ===");
                 LOG_PRINTLN("  s - Status");
+                LOG_PRINTLN("  d - ADC Diagnostic (tests SPI speeds)");
                 LOG_PRINTLN("  r - Restart");
                 LOG_PRINTLN("  h - Help");
                 break;
