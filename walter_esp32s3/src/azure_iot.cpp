@@ -8,6 +8,7 @@
 
 #include "azure_iot.h"
 #include "gnss.h"
+#include "network_status.h"
 #include <mbedtls/md.h>
 #include <mbedtls/base64.h>
 #include <time.h>
@@ -409,9 +410,13 @@ bool AzureIoTClient::publishFrame(const AdcFrame& frame) {
     char* base64Samples = _payloadBuffer;
     base64Encode((uint8_t*)frame.samples, samplesBytes, base64Samples, base64Len);
 
-    // Build GNSS JSON fragment
+    // Build GNSS JSON fragment (includes latitude, longitude, locationStale)
     char gnssJson[256];
     gnssManager.toJsonFragment(gnssJson, sizeof(gnssJson));
+
+    // Build LTE signal quality JSON fragment
+    char lteJson[256];
+    networkStatus.toJsonFragment(lteJson, sizeof(lteJson));
 
     // Build JSON
     char* jsonPayload = _payloadBuffer + base64Len + 16;  // Leave space for base64
@@ -424,6 +429,7 @@ bool AzureIoTClient::publishFrame(const AdcFrame& frame) {
         "\"sampleRate\":%.1f,"
         "\"numSamples\":%u,"
         "\"samplesB64\":\"%s\","
+        "%s,"
         "%s"
         "}",
         AZURE_DEVICE_ID,
@@ -433,7 +439,8 @@ bool AzureIoTClient::publishFrame(const AdcFrame& frame) {
         frame.sampleRateHz,
         frame.numSamples,
         base64Samples,
-        gnssJson
+        gnssJson,
+        lteJson
     );
 
     // Publish to Azure IoT Hub telemetry topic
@@ -465,9 +472,13 @@ bool AzureIoTClient::publishStatus(bool adcOnline, const char* errorMsg) {
         }
     }
 
-    // Build GNSS JSON fragment
+    // Build GNSS JSON fragment (includes latitude, longitude, locationStale)
     char gnssJson[256];
     gnssManager.toJsonFragment(gnssJson, sizeof(gnssJson));
+
+    // Build LTE signal quality JSON fragment
+    char lteJson[256];
+    networkStatus.toJsonFragment(lteJson, sizeof(lteJson));
 
     // Build status JSON payload
     char* jsonPayload = _payloadBuffer;
@@ -478,10 +489,10 @@ bool AzureIoTClient::publishStatus(bool adcOnline, const char* errorMsg) {
         "\"timestamp\":%lu,"
         "\"uptimeMs\":%lu,"
         "\"adcOnline\":%s,"
-        "\"lteRssi\":%d,"
         "\"freeHeap\":%u,"
         "\"publishCount\":%u,"
         "\"errorCount\":%u,"
+        "%s,"
         "%s"
         "%s%s%s"
         "}",
@@ -489,11 +500,11 @@ bool AzureIoTClient::publishStatus(bool adcOnline, const char* errorMsg) {
         (unsigned long)now,
         (unsigned long)millis(),
         adcOnline ? "true" : "false",
-        _rssi,
         ESP.getFreeHeap(),
         _publishCount,
         _errorCount,
         gnssJson,
+        lteJson,
         errorMsg ? ",\"error\":\"" : "",
         errorMsg ? errorMsg : "",
         errorMsg ? "\"" : ""
@@ -507,6 +518,66 @@ bool AzureIoTClient::publishStatus(bool adcOnline, const char* errorMsg) {
         return true;
     } else {
         LOG_PRINTLN("[Azure] MQTT status publish failed");
+        _errorCount++;
+        _connected = false;
+        return false;
+    }
+}
+
+bool AzureIoTClient::publishMessage(const char* messageType, const char* message) {
+    if (!_connected) {
+        LOG_PRINTLN("[Azure] Not connected, cannot publish message");
+        _errorCount++;
+        return false;
+    }
+
+    // Check if SAS token needs refresh
+    uint32_t now = time(nullptr);
+    if (now > 1000000000 && now > (_sasExpiry - 300)) {
+        LOG_PRINTLN("[Azure] SAS token expiring, reconnecting...");
+        disconnect();
+        if (!connect()) {
+            return false;
+        }
+    }
+
+    // Build GNSS JSON fragment (includes latitude, longitude, locationStale)
+    char gnssJson[256];
+    gnssManager.toJsonFragment(gnssJson, sizeof(gnssJson));
+
+    // Build LTE signal quality JSON fragment
+    char lteJson[256];
+    networkStatus.toJsonFragment(lteJson, sizeof(lteJson));
+
+    // Build message JSON payload
+    char* jsonPayload = _payloadBuffer;
+    size_t jsonLen = snprintf(jsonPayload, PAYLOAD_BUFFER_SIZE,
+        "{"
+        "\"deviceId\":\"%s\","
+        "\"messageType\":\"%s\","
+        "\"message\":\"%s\","
+        "\"timestamp\":%lu,"
+        "\"uptimeMs\":%lu,"
+        "%s,"
+        "%s"
+        "}",
+        AZURE_DEVICE_ID,
+        messageType,
+        message,
+        (unsigned long)now,
+        (unsigned long)millis(),
+        gnssJson,
+        lteJson
+    );
+
+    LOG_PRINTF("[Azure] Publishing message: %s - %s\n", messageType, message);
+
+    // Publish to Azure IoT Hub telemetry topic
+    if (WalterModem::mqttPublish(AZURE_TELEMETRY_TOPIC, (uint8_t*)jsonPayload, jsonLen)) {
+        _publishCount++;
+        return true;
+    } else {
+        LOG_PRINTLN("[Azure] MQTT message publish failed");
         _errorCount++;
         _connected = false;
         return false;
@@ -571,6 +642,16 @@ void AzureIoTClient::telemetryTaskFunc(void* param) {
     uint32_t lastStatusTime = 0;
     const uint32_t statusIntervalMs = 30000;  // Send status every 30 seconds
 
+    // Signal quality update timing
+    uint32_t lastSignalQueryTime = 0;
+    const uint32_t signalQueryIntervalMs = 60000;  // Query signal every 60 seconds
+
+    // GNSS acquisition state - wait for modem warmup and some status messages first
+    bool gnssAcquired = gnssManager.hasValidLocation() && !gnssManager.isLocationStale();
+    uint32_t connectTime = 0;  // Time when first connected
+    const uint32_t gnssWarmupMs = 60000;  // Wait 1 minute after connect before GNSS
+    uint32_t statusMessagesSent = 0;  // Count status messages before GNSS
+
     while (!client->_stopRequested) {
         // Ensure connection
         if (!client->_connected) {
@@ -578,10 +659,20 @@ void AzureIoTClient::telemetryTaskFunc(void* param) {
 
             if (client->connect()) {
                 retryDelay = 2000;  // Reset retry delay on success
+                connectTime = millis();
+
+                // Initialize network status monitoring
+                networkStatus.begin();
+
+                // Get initial signal quality
+                networkStatus.updateSignalQuality();
+                lastSignalQueryTime = millis();
+
                 // Send immediate status on connect
                 client->publishStatus(client->_adcAvailable,
                     client->_adcAvailable ? nullptr : "ADC not detected");
                 lastStatusTime = millis();
+                statusMessagesSent++;
             } else {
                 LOG_PRINTF("[Azure Task] Connection failed, retry in %u ms\n", retryDelay);
                 vTaskDelay(pdMS_TO_TICKS(retryDelay));
@@ -590,25 +681,73 @@ void AzureIoTClient::telemetryTaskFunc(void* param) {
             }
         }
 
-        // Send periodic status heartbeat
         uint32_t now = millis();
+
+        // Update signal quality periodically
+        if (now - lastSignalQueryTime >= signalQueryIntervalMs) {
+            networkStatus.updateSignalQuality();
+            lastSignalQueryTime = now;
+        }
+
+        // Send periodic status heartbeat
         if (now - lastStatusTime >= statusIntervalMs) {
             client->publishStatus(client->_adcAvailable,
                 client->_adcAvailable ? nullptr : "ADC not detected");
             lastStatusTime = now;
+            statusMessagesSent++;
+        }
+
+        // GNSS acquisition after modem warmup (1 minute connected + 2 status messages)
+        // Only do this once per boot if we don't have a fresh fix
+        if (!gnssAcquired &&
+            connectTime > 0 &&
+            statusMessagesSent >= 2 &&
+            (now - connectTime) >= gnssWarmupMs) {
+
+            LOG_PRINTLN("[Azure Task] Modem warmed up, preparing GNSS acquisition...");
+
+            // Send "searching for GNSS fix" message to cloud
+            client->publishMessage("gnss", "searching for GNSS fix");
+
+            LOG_PRINTLN("[Azure Task] Disconnecting MQTT for GNSS...");
+
+            // Disconnect MQTT
+            client->disconnect();
+            client->_lteConnected = false;  // Force full modem re-init after GNSS
+
+            // Initialize GNSS subsystem
+            gnssManager.begin();
+
+            // Patient GNSS acquisition - up to 90 seconds (cold start can be slow)
+            LOG_PRINTLN("[Azure Task] Acquiring GNSS fix (may take up to 90 seconds)...");
+            if (gnssManager.acquireFix(90, 2)) {
+                const GnssLocation& loc = gnssManager.getLocation();
+                LOG_PRINTF("[Azure Task] GNSS fix acquired: %.6f, %.6f\n",
+                          loc.latitude, loc.longitude);
+                gnssAcquired = true;
+            } else {
+                LOG_PRINTLN("[Azure Task] GNSS fix failed - will use stale location if available");
+                gnssAcquired = true;  // Don't try again this boot
+            }
+
+            // Reconnection will happen on next loop iteration
+            continue;
         }
 
 #if GNSS_UPDATE_INTERVAL_MS > 0
-        // Check if GNSS location needs update
-        if (gnssManager.needsUpdate()) {
-            LOG_PRINTLN("[Azure Task] GNSS update needed, disconnecting MQTT...");
+        // Check if periodic GNSS location update is needed
+        if (gnssAcquired && gnssManager.needsUpdate()) {
+            LOG_PRINTLN("[Azure Task] Periodic GNSS update needed, disconnecting MQTT...");
+
+            // Send notification before going offline
+            client->publishMessage("gnss", "refreshing GNSS location");
 
             // Disconnect MQTT (but remember we want to reconnect)
             client->disconnect();
             client->_lteConnected = false;  // Force full modem re-init after GNSS
 
             // Acquire new GNSS fix
-            if (gnssManager.acquireFix()) {
+            if (gnssManager.acquireFix(90, 2)) {
                 const GnssLocation& loc = gnssManager.getLocation();
                 LOG_PRINTF("[Azure Task] GNSS updated: %.6f, %.6f\n",
                           loc.latitude, loc.longitude);

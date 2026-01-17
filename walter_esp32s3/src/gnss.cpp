@@ -28,6 +28,7 @@ GnssManager::GnssManager()
     , _fixValid(false)
 {
     _location.valid = false;
+    _location.stale = true;  // Any loaded location is stale until we get a fresh fix
     _location.latitude = 0.0f;
     _location.longitude = 0.0f;
     _location.altitude = 0.0f;
@@ -45,6 +46,14 @@ GnssManager::GnssManager()
 
 bool GnssManager::begin() {
     LOG_PRINTLN("[GNSS] Initializing GNSS subsystem...");
+
+    // Try to load last known location from NVS
+    if (loadFromNvs()) {
+        LOG_PRINTF("[GNSS] Loaded stale location from NVS: %.6f, %.6f\n",
+                  _location.latitude, _location.longitude);
+    } else {
+        LOG_PRINTLN("[GNSS] No previous location stored in NVS");
+    }
 
     // Set event handler for GNSS fixes
     WalterModem::gnssSetEventHandler(gnssEventHandler, this);
@@ -163,6 +172,7 @@ bool GnssManager::acquireFix(uint32_t timeoutSec, uint8_t maxAttempts) {
             if (_pendingFix.estimatedConfidence <= GNSS_MAX_CONFIDENCE &&
                 _pendingFix.estimatedConfidence > 0) {
                 _location.valid = true;
+                _location.stale = false;  // Fresh fix, not stale
                 _location.latitude = _pendingFix.latitude;
                 _location.longitude = _pendingFix.longitude;
                 _location.altitude = _pendingFix.height;
@@ -175,6 +185,11 @@ bool GnssManager::acquireFix(uint32_t timeoutSec, uint8_t maxAttempts) {
                           _location.latitude, _location.longitude,
                           _location.altitude, _location.confidence,
                           _location.satelliteCount);
+
+                // Save to NVS for persistence across reboots
+                if (saveToNvs()) {
+                    LOG_PRINTLN("[GNSS] Location saved to NVS");
+                }
 
                 success = true;
                 break;
@@ -251,26 +266,82 @@ uint32_t GnssManager::getLocationAgeMs() const {
 }
 
 size_t GnssManager::toJsonFragment(char* buffer, size_t bufferLen) const {
+    // No location ever stored - use null values
     if (!_location.valid) {
         return snprintf(buffer, bufferLen,
-            "\"gnss\":{\"valid\":false}");
+            "\"latitude\":null,\"longitude\":null,\"locationStale\":true");
     }
 
+    // Have location (fresh or stale from NVS)
     return snprintf(buffer, bufferLen,
-        "\"gnss\":{"
-        "\"valid\":true,"
-        "\"lat\":%.6f,"
-        "\"lon\":%.6f,"
-        "\"alt\":%.1f,"
-        "\"accuracy\":%.1f,"
-        "\"sats\":%u,"
-        "\"ageMs\":%lu"
-        "}",
+        "\"latitude\":%.6f,"
+        "\"longitude\":%.6f,"
+        "\"locationStale\":%s,"
+        "\"locationAlt\":%.1f,"
+        "\"locationAccuracy\":%.1f,"
+        "\"locationSats\":%u,"
+        "\"locationAgeMs\":%lu",
         _location.latitude,
         _location.longitude,
+        _location.stale ? "true" : "false",
         _location.altitude,
         _location.confidence,
         _location.satelliteCount,
         (unsigned long)getLocationAgeMs()
     );
+}
+
+// =============================================================================
+// NVS STORAGE
+// =============================================================================
+
+bool GnssManager::loadFromNvs() {
+    _prefs.begin(GNSS_NVS_NAMESPACE, true);  // Read-only
+
+    // Check if we have stored data
+    if (!_prefs.isKey("valid")) {
+        _prefs.end();
+        return false;
+    }
+
+    bool valid = _prefs.getBool("valid", false);
+    if (!valid) {
+        _prefs.end();
+        return false;
+    }
+
+    // Load location data
+    _location.latitude = _prefs.getFloat("lat", 0.0f);
+    _location.longitude = _prefs.getFloat("lon", 0.0f);
+    _location.altitude = _prefs.getFloat("alt", 0.0f);
+    _location.confidence = _prefs.getFloat("conf", 9999.0f);
+    _location.satelliteCount = _prefs.getUChar("sats", 0);
+    _location.fixTimestamp = _prefs.getULong("ts", 0);
+
+    // Mark as valid but stale (from NVS, not fresh)
+    _location.valid = true;
+    _location.stale = true;
+    _location.fixTimeMs = 0;  // No fix this session yet
+
+    _prefs.end();
+    return true;
+}
+
+bool GnssManager::saveToNvs() {
+    if (!_location.valid) {
+        return false;
+    }
+
+    _prefs.begin(GNSS_NVS_NAMESPACE, false);  // Read-write
+
+    _prefs.putBool("valid", true);
+    _prefs.putFloat("lat", _location.latitude);
+    _prefs.putFloat("lon", _location.longitude);
+    _prefs.putFloat("alt", _location.altitude);
+    _prefs.putFloat("conf", _location.confidence);
+    _prefs.putUChar("sats", _location.satelliteCount);
+    _prefs.putULong("ts", _location.fixTimestamp);
+
+    _prefs.end();
+    return true;
 }

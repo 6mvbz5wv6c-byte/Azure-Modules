@@ -24,6 +24,7 @@
 #include "azure_iot.h"
 #include "webui.h"
 #include "gnss.h"
+#include "network_status.h"
 
 // External diagnostic function from ads1256_test.cpp
 extern void runAdsDiagnostic();
@@ -97,8 +98,22 @@ void printStatus() {
     }
     LOG_PRINTF("Frames: %u | ", ringBuffer ? ringBuffer->getFrameCount() : 0);
     LOG_PRINTF("Azure: %u | ", azureClient ? azureClient->getPublishCount() : 0);
+
+    // LTE signal quality
+    if (networkStatus.hasValidSignal()) {
+        LOG_PRINTF("LTE: %ddBm (%s) | ", networkStatus.getRsrp(), networkStatus.getSignalStrengthText());
+    } else {
+        LOG_PRINT("LTE: N/A | ");
+    }
+
     LOG_PRINTF("WS: %d | ", webServer ? webServer->getClientCount() : 0);
-    LOG_PRINTF("GNSS: %s\n", gnssManager.hasValidLocation() ? "OK" : "N/A");
+
+    // GNSS status with stale indicator
+    if (gnssManager.hasValidLocation()) {
+        LOG_PRINTF("GNSS: %s\n", gnssManager.isLocationStale() ? "stale" : "OK");
+    } else {
+        LOG_PRINTLN("GNSS: N/A");
+    }
 }
 
 // =============================================================================

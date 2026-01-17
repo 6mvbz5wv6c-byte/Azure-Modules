@@ -66,6 +66,14 @@ public:
     bool publishStatus(bool adcOnline, const char* errorMsg = nullptr);
 
     /**
+     * @brief Publish a simple text message to the cloud
+     * @param messageType Message type identifier
+     * @param message Message content
+     * @return true if published successfully
+     */
+    bool publishMessage(const char* messageType, const char* message);
+
+    /**
      * @brief Start telemetry task
      * @param ringBuffer Ring buffer to read frames from (can be nullptr)
      * @param taskHandle Output task handle
@@ -153,7 +161,9 @@ private:
     static void telemetryTaskFunc(void* param);
 
     // JSON/Base64 encoding buffer
-    static constexpr size_t PAYLOAD_BUFFER_SIZE = 8192;
+    // Frame payload: 1000 samples * 4 bytes = 4000 bytes -> ~5400 bytes base64 + ~1000 JSON overhead
+    // Need at least 7KB for frame payloads, use 16KB for safety
+    static constexpr size_t PAYLOAD_BUFFER_SIZE = 16384;
     char* _payloadBuffer;
 };
 
