@@ -3,7 +3,7 @@
  * @brief ADS1256 diagnostic test - high debug verbosity
  *
  * Standalone diagnostic to troubleshoot ADS1256 communication issues.
- * Tests multiple SPI speeds AND modes, reads all registers, attempts sampling
+ * Tests multiple SPI speeds, reads all registers, attempts sampling
  * even with wrong chip ID.
  *
  * To use: Rename main.cpp to main.cpp.bak and this to main.cpp
@@ -29,26 +29,8 @@ const uint32_t SPI_SPEEDS[] = {
 };
 const int NUM_SPEEDS = sizeof(SPI_SPEEDS) / sizeof(SPI_SPEEDS[0]);
 
-// SPI modes to test
-// ADS1256 datasheet specifies Mode 1 (CPOL=0, CPHA=1)
-// But let's test all modes to see what actually works
-struct SpiModeInfo {
-    uint8_t mode;
-    const char* name;
-    const char* description;
-};
-
-const SpiModeInfo SPI_MODES[] = {
-    { SPI_MODE1, "MODE1", "CPOL=0 CPHA=1 (ADS1256 spec)" },
-    { SPI_MODE0, "MODE0", "CPOL=0 CPHA=0" },
-    { SPI_MODE2, "MODE2", "CPOL=1 CPHA=0" },
-    { SPI_MODE3, "MODE3", "CPOL=1 CPHA=1" },
-};
-const int NUM_MODES = sizeof(SPI_MODES) / sizeof(SPI_MODES[0]);
-
-// Current test settings
+// Current test settings - use MODE1 as per ADS1256 datasheet
 SPISettings currentSpiSettings(500000, MSBFIRST, SPI_MODE1);
-uint8_t currentSpiMode = SPI_MODE1;
 SPIClass* spi = nullptr;
 
 // =============================================================================
@@ -299,16 +281,15 @@ void testSampling(int numSamples) {
 }
 
 // =============================================================================
-// SPI SPEED/MODE TEST
+// SPI SPEED TEST
 // =============================================================================
 
-bool testSpiConfig(uint32_t speedHz, uint8_t spiMode, const char* modeName) {
+bool testSpiSpeed(uint32_t speedHz) {
     Serial.printf("\n══════════════════════════════════════════════════════════════\n");
-    Serial.printf("TESTING: %s @ %lu Hz (%.2f MHz)\n", modeName, speedHz, speedHz / 1000000.0f);
+    Serial.printf("TESTING SPI SPEED: %lu Hz (%.2f MHz)\n", speedHz, speedHz / 1000000.0f);
     Serial.printf("══════════════════════════════════════════════════════════════\n");
 
-    currentSpiSettings = SPISettings(speedHz, MSBFIRST, spiMode);
-    currentSpiMode = spiMode;
+    currentSpiSettings = SPISettings(speedHz, MSBFIRST, SPI_MODE1);
 
     // Hardware reset before each test
     hardwareReset();
@@ -389,23 +370,10 @@ bool testSpiConfig(uint32_t speedHz, uint8_t spiMode, const char* modeName) {
 // MAIN TEST ENTRY POINT
 // =============================================================================
 
-// Store results for summary
-struct TestResult {
-    uint8_t mode;
-    uint32_t speed;
-    bool passed;
-    uint8_t chipId;
-    bool consistent;
-};
-
-#define MAX_RESULTS 32
-TestResult results[MAX_RESULTS];
-int numResults = 0;
-
 void runAdsDiagnostic() {
     Serial.println("\n");
     Serial.println("╔══════════════════════════════════════════════════════════════╗");
-    Serial.println("║     ADS1256 DIAGNOSTIC TEST - ALL SPI MODES & SPEEDS         ║");
+    Serial.println("║          ADS1256 DIAGNOSTIC TEST - HIGH DEBUG MODE           ║");
     Serial.println("╚══════════════════════════════════════════════════════════════╝");
 
     Serial.println("\n[CONFIG] Pin Configuration:");
@@ -415,12 +383,7 @@ void runAdsDiagnostic() {
     Serial.printf("  CS:    GPIO%d\n", PIN_ADS_CS);
     Serial.printf("  DRDY:  GPIO%d\n", PIN_ADS_DRDY);
     Serial.printf("  RST:   GPIO%d\n", PIN_ADS_RST);
-
-    Serial.println("\n[INFO] SPI Modes explanation:");
-    Serial.println("  MODE0: CPOL=0 CPHA=0 - Clock idle LOW,  sample on RISING edge");
-    Serial.println("  MODE1: CPOL=0 CPHA=1 - Clock idle LOW,  sample on FALLING edge (ADS1256 spec)");
-    Serial.println("  MODE2: CPOL=1 CPHA=0 - Clock idle HIGH, sample on FALLING edge");
-    Serial.println("  MODE3: CPOL=1 CPHA=1 - Clock idle HIGH, sample on RISING edge");
+    Serial.println("  SPI Mode: MODE1 (CPOL=0, CPHA=1) - ADS1256 spec");
 
     // Initialize SPI
     Serial.println("\n[INIT] Initializing SPI bus...");
@@ -438,33 +401,14 @@ void runAdsDiagnostic() {
     Serial.printf("\n[GPIO] Initial DRDY state: %s\n",
                   digitalRead(PIN_ADS_DRDY) == LOW ? "LOW" : "HIGH");
 
-    // Test each SPI mode with each speed
-    numResults = 0;
-    int bestMode = -1;
+    // Test each SPI speed
     int bestSpeed = -1;
-
-    for (int m = 0; m < NUM_MODES; m++) {
-        Serial.printf("\n\n");
-        Serial.println("################################################################");
-        Serial.printf("###  TESTING SPI %s - %s\n", SPI_MODES[m].name, SPI_MODES[m].description);
-        Serial.println("################################################################");
-
-        for (int s = 0; s < NUM_SPEEDS && numResults < MAX_RESULTS; s++) {
-            bool passed = testSpiConfig(SPI_SPEEDS[s], SPI_MODES[m].mode, SPI_MODES[m].name);
-
-            // Record result
-            results[numResults].mode = SPI_MODES[m].mode;
-            results[numResults].speed = SPI_SPEEDS[s];
-            results[numResults].passed = passed;
-            numResults++;
-
-            if (passed && bestMode < 0) {
-                bestMode = m;
-                bestSpeed = s;
-            }
-
-            delay(300);
+    for (int i = 0; i < NUM_SPEEDS; i++) {
+        bool passed = testSpiSpeed(SPI_SPEEDS[i]);
+        if (passed && bestSpeed < 0) {
+            bestSpeed = i;
         }
+        delay(500);
     }
 
     // Summary
@@ -473,64 +417,27 @@ void runAdsDiagnostic() {
     Serial.println("║                     DIAGNOSTIC SUMMARY                       ║");
     Serial.println("╚══════════════════════════════════════════════════════════════╝");
 
-    Serial.println("\n[RESULTS TABLE] Mode/Speed combinations tested:\n");
-    Serial.println("  Speed (Hz)  | MODE0 | MODE1 | MODE2 | MODE3 |");
-    Serial.println("  ------------|-------|-------|-------|-------|");
-
-    for (int s = 0; s < NUM_SPEEDS; s++) {
-        Serial.printf("  %10lu |", SPI_SPEEDS[s]);
-        for (int m = 0; m < NUM_MODES; m++) {
-            // Find this result
-            bool found = false;
-            for (int r = 0; r < numResults; r++) {
-                if (results[r].speed == SPI_SPEEDS[s] && results[r].mode == SPI_MODES[m].mode) {
-                    Serial.printf("  %s  |", results[r].passed ? " OK " : "FAIL");
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) Serial.print("  --  |");
-        }
-        Serial.println();
-    }
-
-    Serial.println();
-
-    if (bestMode >= 0 && bestSpeed >= 0) {
-        Serial.println("[SUCCESS] Working configuration found!\n");
-        Serial.printf("  Best Mode:  %s (%s)\n", SPI_MODES[bestMode].name, SPI_MODES[bestMode].description);
-        Serial.printf("  Best Speed: %lu Hz (%.2f MHz)\n", SPI_SPEEDS[bestSpeed], SPI_SPEEDS[bestSpeed] / 1000000.0f);
-        Serial.println("\n[RECOMMENDATION] Update config.h with:");
+    if (bestSpeed >= 0) {
+        Serial.printf("\n[RESULT] Best working speed: %lu Hz (%.2f MHz)\n",
+                      SPI_SPEEDS[bestSpeed], SPI_SPEEDS[bestSpeed] / 1000000.0f);
+        Serial.println("[RECOMMENDATION] Update config.h with:");
         Serial.printf("  #define ADS_SPI_FREQ    %lu\n", SPI_SPEEDS[bestSpeed]);
-        Serial.printf("  #define ADS_SPI_MODE    SPI_%s\n", SPI_MODES[bestMode].name);
     } else {
-        Serial.println("[FAILED] No working SPI configuration found!\n");
-        Serial.println("[TROUBLESHOOTING]:");
-        Serial.println("  1. Check wiring:");
-        Serial.println("     - MOSI (GPIO%d) -> ADS1256 DIN");
-        Serial.println("     - MISO (GPIO%d) -> ADS1256 DOUT");
-        Serial.println("     - SCK  (GPIO%d) -> ADS1256 SCLK");
-        Serial.println("     - CS   (GPIO%d) -> ADS1256 CS");
-        Serial.println("  2. Verify power:");
-        Serial.println("     - AVDD = 5V (analog supply)");
-        Serial.println("     - DVDD = 3.3V or 5V (digital supply)");
-        Serial.println("     - AGND and DGND connected");
-        Serial.println("  3. Check oscillator:");
-        Serial.println("     - 7.68 MHz crystal connected to XTAL1/XTAL2");
-        Serial.println("     - Or external clock to CLKIN");
-        Serial.println("  4. Hardware:");
-        Serial.println("     - Add 100nF decoupling caps on AVDD and DVDD");
-        Serial.println("     - Keep SPI wires short (<10cm)");
-        Serial.println("     - Try 33-100 ohm series resistors on SPI lines");
+        Serial.println("\n[RESULT] No SPI speed produced correct chip ID!");
+        Serial.println("\n[TROUBLESHOOTING]:");
+        Serial.println("  1. Check wiring - especially MISO/MOSI orientation");
+        Serial.println("  2. Verify ADS1256 is powered (AVDD=5V, DVDD=3.3V or 5V)");
+        Serial.println("  3. Check for cold solder joints");
+        Serial.println("  4. Try adding 10-100 ohm series resistors on SPI lines");
+        Serial.println("  5. Reduce wire length or use shielded cables");
+        Serial.println("  6. Add 100nF decoupling caps near ADS1256 power pins");
     }
 
     Serial.println("\n[MONITOR] Continuous slow reads (press reset to restart)...\n");
 
-    // Use best working config or fallback to conservative settings
-    uint8_t monitorMode = (bestMode >= 0) ? SPI_MODES[bestMode].mode : SPI_MODE1;
-    uint32_t monitorSpeed = (bestSpeed >= 0) ? SPI_SPEEDS[bestSpeed] : 100000;
-
-    currentSpiSettings = SPISettings(monitorSpeed, MSBFIRST, monitorMode);
+    // Use best working speed or fallback to conservative settings
+    uint32_t monitorSpeed = (bestSpeed >= 0) ? SPI_SPEEDS[bestSpeed] : 250000;
+    currentSpiSettings = SPISettings(monitorSpeed, MSBFIRST, SPI_MODE1);
     hardwareReset();
 
     while (true) {
