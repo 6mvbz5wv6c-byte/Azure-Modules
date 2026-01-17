@@ -83,9 +83,9 @@ void setup() {
     Serial.printf("Expected location: Springdale, AR (%.4f, %.4f)\n", EXPECTED_LAT, EXPECTED_LON);
     Serial.println();
 
-    // Initialize modem
+    // Initialize modem (Walter uses Serial2 internally for modem communication)
     Serial.println("[Init] Initializing Walter modem...");
-    if (!WalterModem::begin(MODEM_SERIAL)) {
+    if (!WalterModem::begin(&Serial2)) {
         Serial.println("[Init] ERROR: Failed to initialize modem!");
         while(1) delay(1000);
     }
