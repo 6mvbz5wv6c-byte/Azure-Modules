@@ -374,16 +374,16 @@ void ADS1256::startSamplingTask(AdcRingBuffer* ringBuffer, TaskHandle_t* taskHan
     LOG_PRINTLN("[ADS1256] Creating sampling task...");
     Serial.flush();  // Ensure output before task creation
 
-    // Create the sampling task - use Core 0 for stability (Core 1 can have issues)
-    // Stack size in WORDS (4 bytes each on ESP32)
+    // Create the sampling task on Core 1 (away from WiFi/networking stack)
+    // Stack size in BYTES on ESP32. AdcFrame is heap-allocated to avoid overflow.
     BaseType_t result = xTaskCreatePinnedToCore(
         samplingTaskFunc,
         "ADC_Sample",
-        TASK_STACK_ADC,     // 4096 words = 16KB
+        TASK_STACK_ADC,     // 8192 bytes (defined in config.h)
         this,
         TASK_PRIORITY_ADC,  // Priority 5
         &_samplingTask,
-        0                   // Core 0 for better stability
+        TASK_CORE_ADC       // Core 1 for ADC (from config.h)
     );
 
     if (result != pdPASS) {
@@ -419,70 +419,56 @@ void ADS1256::stopSamplingTask() {
 }
 
 void ADS1256::samplingTaskFunc(void* param) {
-    ADS1256* adc = static_cast<ADS1256*>(param);
-
     // =========================================================================
-    // ESP32/FreeRTOS Best Practices: Task Initialization
+    // ADC SAMPLING TASK
+    // CRITICAL: AdcFrame (~4KB) must be on HEAP, not stack!
+    // Stack overflow was causing crash before first instruction.
     // =========================================================================
 
-    LOG_PRINTLN("[ADC Task] === Task Started ===");
-    Serial.flush();
+    LOG_PRINTLN("[ADC Task] Starting...");
 
-    // Check stack high water mark
-    UBaseType_t stackHighWater = uxTaskGetStackHighWaterMark(NULL);
-    LOG_PRINTF("[ADC Task] Initial stack free: %u words\n", stackHighWater);
-    Serial.flush();
-
-    // Add this task to watchdog (optional, comment out if causing issues)
-    // esp_task_wdt_add(NULL);
-
-    // Yield immediately to let other tasks run
-    LOG_PRINTLN("[ADC Task] Yielding to let other tasks initialize...");
-    Serial.flush();
-    taskYIELD();
-
-    // Wait for system to stabilize
-    LOG_PRINTLN("[ADC Task] Waiting 1 second for system stability...");
-    Serial.flush();
-
-    for (int i = 0; i < 10; i++) {
-        vTaskDelay(pdMS_TO_TICKS(100));
-        // esp_task_wdt_reset();  // Feed watchdog if enabled
+    ADS1256* adc = _instance;
+    if (adc == nullptr) {
+        LOG_PRINTLN("[ADC Task] ERROR: _instance is null!");
+        vTaskDelete(NULL);
+        return;
     }
 
+    // Check stack at entry (before any large allocations)
+    UBaseType_t stackHighWater = uxTaskGetStackHighWaterMark(NULL);
+    LOG_PRINTF("[ADC Task] Stack free at entry: %u words\n", stackHighWater);
+
+    // CRITICAL: Allocate frame on HEAP, not stack!
+    // AdcFrame is ~4KB (1000 samples * 4 bytes + header)
+    // Stack is only 4-8KB, so stack allocation would overflow immediately
+    AdcFrame* frame = new AdcFrame();
+    if (frame == nullptr) {
+        LOG_PRINTLN("[ADC Task] ERROR: Failed to allocate frame buffer!");
+        vTaskDelete(NULL);
+        return;
+    }
+    LOG_PRINTLN("[ADC Task] Frame buffer allocated on heap");
+
+    // Brief startup delay for system stability
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // Configure ADC
     LOG_PRINTLN("[ADC Task] Configuring ADC...");
-    Serial.flush();
-
-    // Configure for 1000 SPS differential channel 0
     adc->configure(ADS_GAIN_4, ADS_DRATE_1000SPS);
-
-    LOG_PRINTLN("[ADC Task] Setting differential channel...");
-    Serial.flush();
     adc->setDiffChannel(0);
 
+    // Start continuous mode
     LOG_PRINTLN("[ADC Task] Starting continuous mode...");
-    Serial.flush();
     adc->startContinuous();
 
-    // Check stack after configuration
-    stackHighWater = uxTaskGetStackHighWaterMark(NULL);
-    LOG_PRINTF("[ADC Task] Stack free after config: %u words\n", stackHighWater);
-    Serial.flush();
-
-    // Now attach interrupt - task is ready to receive notifications
+    // Attach DRDY interrupt (must be done from within the task)
     LOG_PRINTLN("[ADC Task] Attaching DRDY interrupt...");
-    Serial.flush();
-
     _taskToNotify = xTaskGetCurrentTaskHandle();
     attachInterrupt(digitalPinToInterrupt(PIN_ADS_DRDY), drdyISR, FALLING);
 
-    LOG_PRINTLN("[ADC Task] DRDY interrupt attached successfully");
-    Serial.flush();
-
-    // Initialize frame buffer
-    AdcFrame frame;
-    frame.sampleRateHz = SAMPLE_RATE_HZ;
-    frame.numSamples = FRAME_SIZE;
+    // Initialize frame
+    frame->sampleRateHz = SAMPLE_RATE_HZ;
+    frame->numSamples = FRAME_SIZE;
 
     uint32_t sampleIndex = 0;
     uint32_t frameIndex = 0;
@@ -490,11 +476,14 @@ void ADS1256::samplingTaskFunc(void* param) {
     const int64_t samplePeriodUs = 1000000 / SAMPLE_RATE_HZ;
     uint32_t loopCounter = 0;
 
-    LOG_PRINTLN("[ADC Task] === Entering Main Sampling Loop ===");
-    Serial.flush();
+    // Check stack after all initialization
+    stackHighWater = uxTaskGetStackHighWaterMark(NULL);
+    LOG_PRINTF("[ADC Task] Stack free after init: %u words\n", stackHighWater);
+
+    LOG_PRINTLN("[ADC Task] === ENTERING MAIN LOOP ===");
 
     while (!adc->_stopRequested) {
-        // Wait for DRDY interrupt (task notification) or timeout
+        // Wait for DRDY interrupt (task notification) with timeout
         // This properly blocks and yields CPU to other tasks
         uint32_t notifyValue = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
 
@@ -502,14 +491,11 @@ void ADS1256::samplingTaskFunc(void* param) {
         if (++loopCounter >= 1000) {
             loopCounter = 0;
             taskYIELD();
-            // Optional: Check stack health periodically
-            // UBaseType_t stackFree = uxTaskGetStackHighWaterMark(NULL);
-            // if (stackFree < 100) LOG_PRINTLN("[ADC Task] WARNING: Low stack!");
         }
 
         // Only read if we got a notification (DRDY interrupt fired)
         if (notifyValue > 0) {
-            // Read sample immediately
+            // Read sample immediately (in continuous mode, no RDATA command needed)
             adc->csLow();
             adc->_spi.beginTransaction(adc->_spiSettings);
 
@@ -520,33 +506,32 @@ void ADS1256::samplingTaskFunc(void* param) {
             adc->_spi.endTransaction();
             adc->csHigh();
 
-            // Convert to signed 32-bit
+            // Convert to signed 32-bit (24-bit two's complement)
             int32_t value = ((int32_t)b0 << 16) | ((int32_t)b1 << 8) | b2;
             if (value & 0x800000) {
                 value -= 0x1000000;
             }
 
             // Store in frame buffer
-            frame.samples[sampleIndex++] = value;
+            frame->samples[sampleIndex++] = value;
             adc->_sampleCount++;
 
             _drdyFlag = false;
 
             // Check if frame is complete
             if (sampleIndex >= FRAME_SIZE) {
-                // Calculate timestamps for this frame
-                int64_t now = esp_timer_get_time();
-                frame.frameIndex = frameIndex++;
-                frame.startTimeUs = frameStartUs;
-                frame.endTimeUs = frameStartUs + (FRAME_SIZE * samplePeriodUs);
+                // Set timestamps for this frame
+                frame->frameIndex = frameIndex++;
+                frame->startTimeUs = frameStartUs;
+                frame->endTimeUs = frameStartUs + (FRAME_SIZE * samplePeriodUs);
 
                 // Push frame to ring buffer
                 if (adc->_ringBuffer) {
-                    adc->_ringBuffer->push(frame);
+                    adc->_ringBuffer->push(*frame);
                 }
 
                 // Prepare for next frame
-                frameStartUs = frame.endTimeUs;
+                frameStartUs = frame->endTimeUs;
                 sampleIndex = 0;
 
                 // Yield briefly to allow other tasks to run
@@ -555,6 +540,8 @@ void ADS1256::samplingTaskFunc(void* param) {
         }
     }
 
-    LOG_PRINTLN("[ADC Task] Sampling loop exited");
+    // Cleanup
+    LOG_PRINTLN("[ADC Task] Sampling loop exited, cleaning up...");
+    delete frame;
     vTaskDelete(nullptr);
 }

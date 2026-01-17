@@ -130,8 +130,9 @@
 #define TASK_PRIORITY_WEBUI     2           // Medium - local display
 #define TASK_PRIORITY_MODEM     2           // Medium - connection management
 
-// Task stack sizes (in words, not bytes)
-#define TASK_STACK_ADC          4096
+// Task stack sizes (in BYTES on ESP32 - FreeRTOS port uses bytes, not words!)
+// Note: Large local variables should be heap-allocated, not stack-allocated
+#define TASK_STACK_ADC          8192        // 8KB - AdcFrame is on heap, not stack
 #define TASK_STACK_TELEMETRY    8192        // Needs space for JSON/base64
 #define TASK_STACK_WEBUI        8192        // Web server needs stack
 #define TASK_STACK_MODEM        4096
