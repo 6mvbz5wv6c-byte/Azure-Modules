@@ -384,16 +384,10 @@ void ADS1256::startSamplingTask(AdcRingBuffer* ringBuffer, TaskHandle_t* taskHan
         *taskHandle = _samplingTask;
     }
 
-    // Set up the task to be notified by ISR
-    _taskToNotify = _samplingTask;
-
-    // Attach interrupt to DRDY pin (falling edge)
-    attachInterrupt(digitalPinToInterrupt(PIN_ADS_DRDY), drdyISR, FALLING);
+    // NOTE: Interrupt is attached inside the task after it's ready
+    // This prevents race conditions where ISR fires before task is initialized
 
     LOG_PRINTLN("[ADS1256] Sampling task started");
-
-    // Yield to let the calling context continue
-    taskYIELD();
 }
 
 void ADS1256::stopSamplingTask() {
@@ -414,15 +408,24 @@ void ADS1256::stopSamplingTask() {
 void ADS1256::samplingTaskFunc(void* param) {
     ADS1256* adc = static_cast<ADS1256*>(param);
 
-    LOG_PRINTLN("[ADC Task] Starting sampling loop");
+    LOG_PRINTLN("[ADC Task] Task started, initializing...");
 
-    // Small delay to let other initialization complete
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // Let other initialization complete first
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    LOG_PRINTLN("[ADC Task] Configuring ADC...");
 
     // Configure for 1000 SPS differential channel 0
     adc->configure(ADS_GAIN_4, ADS_DRATE_1000SPS);
     adc->setDiffChannel(0);
+
+    LOG_PRINTLN("[ADC Task] Starting continuous mode...");
     adc->startContinuous();
+
+    // Now attach interrupt - task is ready to receive notifications
+    _taskToNotify = xTaskGetCurrentTaskHandle();
+    attachInterrupt(digitalPinToInterrupt(PIN_ADS_DRDY), drdyISR, FALLING);
+    LOG_PRINTLN("[ADC Task] DRDY interrupt attached");
 
     AdcFrame frame;
     frame.sampleRateHz = SAMPLE_RATE_HZ;
@@ -437,7 +440,7 @@ void ADS1256::samplingTaskFunc(void* param) {
     // Get initial timestamp
     frameStartUs = esp_timer_get_time();
 
-    LOG_PRINTLN("[ADC Task] Entering main loop");
+    LOG_PRINTLN("[ADC Task] Entering main sampling loop");
 
     while (!adc->_stopRequested) {
         // Wait for DRDY interrupt (task notification) or timeout
