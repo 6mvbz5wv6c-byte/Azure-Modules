@@ -87,8 +87,11 @@ void printStatus() {
 
     LOG_PRINTF("\n[Status] Uptime: %02d:%02d:%02d | ", hours, mins, secs);
     LOG_PRINTF("Heap: %d | ", ESP.getFreeHeap());
-    if (adc && adcAvailable) {
-        LOG_PRINTF("ADC: %.4fV (%u samples) | ", adc->getLastVoltage(), adc->getSampleCount());
+    // Check if ADC is actively sampling (sample count increasing)
+    if (adc && adc->getSampleCount() > 0) {
+        LOG_PRINTF("ADC: %.4fV (%u) | ", adc->getLastVoltage(), adc->getSampleCount());
+    } else if (adc) {
+        LOG_PRINTF("ADC: waiting (%u) | ", adc->getSampleCount());
     } else {
         LOG_PRINT("ADC: N/A | ");
     }

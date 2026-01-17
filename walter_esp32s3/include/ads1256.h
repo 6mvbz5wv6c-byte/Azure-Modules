@@ -121,6 +121,16 @@ public:
     float getLastVoltage() const { return (_lastSample / 8388607.0f) * 2.5f; }
 
     /**
+     * @brief Check if chip was detected during init
+     */
+    bool isChipDetected() const { return _chipDetected; }
+
+    /**
+     * @brief Check if sampling task is running
+     */
+    bool isSampling() const { return _samplingTask != nullptr && !_stopRequested; }
+
+    /**
      * @brief ISR handler - called from DRDY interrupt
      */
     static void IRAM_ATTR drdyISR();

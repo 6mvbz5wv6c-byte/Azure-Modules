@@ -173,6 +173,16 @@ void WebUIServer::broadcastFrame(const AdcFrame& frame) {
         return;  // No clients connected
     }
 
+    // Debug: Log first broadcast
+    static bool firstBroadcast = true;
+    if (firstBroadcast) {
+        LOG_PRINTF("[WebUI] First frame broadcast: %u samples, first=%d, last=%d\n",
+                  frame.numSamples,
+                  frame.numSamples > 0 ? frame.samples[0] : 0,
+                  frame.numSamples > 0 ? frame.samples[frame.numSamples - 1] : 0);
+        firstBroadcast = false;
+    }
+
     // Build JSON message
     // Format: {"t0": startTime, "geo": [sample1, sample2, ...]}
 
@@ -249,6 +259,9 @@ void WebUIServer::streamingTaskFunc(void* param) {
     BufferCursor cursor(*server->_ringBuffer);
     cursor.reset();
 
+    uint32_t framesSent = 0;
+    uint32_t lastLogTime = millis();
+
     while (!server->_stopRequested) {
         // Clean up disconnected clients periodically
         if (server->_ws) {
@@ -259,6 +272,15 @@ void WebUIServer::streamingTaskFunc(void* param) {
         AdcFrame frame;
         if (cursor.waitAndRead(frame, 100)) {
             server->broadcastFrame(frame);
+            framesSent++;
+
+            // Log every 10 seconds
+            if (millis() - lastLogTime > 10000) {
+                LOG_PRINTF("[WebUI Task] Sent %u frames, %d clients, buffer has %u frames\n",
+                          framesSent, server->_ws ? server->_ws->count() : 0,
+                          server->_ringBuffer->getFrameCount());
+                lastLogTime = millis();
+            }
         }
 
         // Small delay to prevent overwhelming clients
