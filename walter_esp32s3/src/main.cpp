@@ -277,14 +277,15 @@ void loop() {
             case 'd':
             case 'D':
                 LOG_PRINTLN("\n=== Running ADS1256 Diagnostic ===");
-                LOG_PRINTLN("This will test multiple SPI speeds and read all registers.");
-                LOG_PRINTLN("WARNING: This may disrupt normal operation!\n");
+                LOG_PRINTLN("This will test multiple SPI speeds.");
+                LOG_PRINTLN("WARNING: ADC sampling will be disrupted!\n");
                 // Stop ADC task before diagnostic
                 if (adc) {
                     adc->stopSamplingTask();
                 }
                 runAdsDiagnostic();
-                // Note: runAdsDiagnostic() loops forever, restart needed after
+                LOG_PRINTLN("\n=== Diagnostic Complete ===");
+                LOG_PRINTLN("Press 'r' to restart with normal operation.");
                 break;
 
             case 'h':
