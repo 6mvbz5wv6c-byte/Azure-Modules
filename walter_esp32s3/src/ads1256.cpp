@@ -391,6 +391,9 @@ void ADS1256::startSamplingTask(AdcRingBuffer* ringBuffer, TaskHandle_t* taskHan
     attachInterrupt(digitalPinToInterrupt(PIN_ADS_DRDY), drdyISR, FALLING);
 
     LOG_PRINTLN("[ADS1256] Sampling task started");
+
+    // Yield to let the calling context continue
+    taskYIELD();
 }
 
 void ADS1256::stopSamplingTask() {
@@ -413,6 +416,9 @@ void ADS1256::samplingTaskFunc(void* param) {
 
     LOG_PRINTLN("[ADC Task] Starting sampling loop");
 
+    // Small delay to let other initialization complete
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     // Configure for 1000 SPS differential channel 0
     adc->configure(ADS_GAIN_4, ADS_DRATE_1000SPS);
     adc->setDiffChannel(0);
@@ -426,15 +432,26 @@ void ADS1256::samplingTaskFunc(void* param) {
     uint32_t frameIndex = 0;
     int64_t frameStartUs = 0;
     const int64_t samplePeriodUs = 1000000 / SAMPLE_RATE_HZ;
+    uint32_t yieldCounter = 0;
 
     // Get initial timestamp
     frameStartUs = esp_timer_get_time();
 
+    LOG_PRINTLN("[ADC Task] Entering main loop");
+
     while (!adc->_stopRequested) {
         // Wait for DRDY interrupt (task notification) or timeout
-        uint32_t notifyValue = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
+        // IMPORTANT: Use notification-only, don't poll isDataReady() which causes tight loop
+        uint32_t notifyValue = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2));
 
-        if (notifyValue > 0 || adc->isDataReady()) {
+        // Yield periodically to prevent starving other tasks
+        if (++yieldCounter >= 100) {
+            yieldCounter = 0;
+            taskYIELD();
+        }
+
+        // Only read if we got a notification (DRDY interrupt fired)
+        if (notifyValue > 0) {
             // Read sample immediately
             adc->csLow();
             adc->_spi.beginTransaction(adc->_spiSettings);

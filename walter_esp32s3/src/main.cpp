@@ -198,15 +198,9 @@ void setup() {
     azureClient = new AzureIoTClient();
     LOG_PRINTLN("[Setup] Azure client allocated");
 
-    // Start WebSocket streaming task
-    webServer->startStreamingTask(ringBuffer, &webuiTaskHandle);
-
-    // Start ADC sampling task
-    LOG_PRINTLN("[Setup] Starting ADC sampling task...");
-    adc->startSamplingTask(ringBuffer, &adcTaskHandle);
-
-    // Start modem initialization in background task
-    LOG_PRINTLN("[Setup] Starting modem initialization task...");
+    // IMPORTANT: Start modem task FIRST - LTE connection should be independent
+    // of all other modules. Even if ADC/WebUI hang, we want cloud connectivity.
+    LOG_PRINTLN("[Setup] Starting modem initialization task (LTE/Azure)...");
     xTaskCreatePinnedToCore(
         modemInitTask,
         "Modem_Init",
@@ -216,6 +210,23 @@ void setup() {
         nullptr,
         TASK_CORE_MODEM
     );
+
+    // Small delay to let modem task start
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Start WebSocket streaming task
+    LOG_PRINTLN("[Setup] Starting WebUI streaming task...");
+    webServer->startStreamingTask(ringBuffer, &webuiTaskHandle);
+
+    // Small delay between task creations
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    // Start ADC sampling task (runs on Core 1, independent of Core 0 tasks)
+    LOG_PRINTLN("[Setup] Starting ADC sampling task...");
+    adc->startSamplingTask(ringBuffer, &adcTaskHandle);
+
+    // Give tasks time to initialize
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     LOG_PRINTLN("[Setup] Initialization complete!");
     LOG_PRINTLN("[Setup] Connect to WiFi: " WIFI_AP_SSID);
