@@ -67,37 +67,34 @@ bool NetworkStatusManager::updateSignalQuality() {
     bool success = false;
 
     // Get cell information including signal quality
-    if (WalterModem::getCellInformation(rsp)) {
-        if (rsp->type == WALTER_MODEM_RSP_DATA_TYPE_CELL_INFO) {
-            // Extract signal quality metrics
-            // Note: WalterModem returns raw values that need conversion
-            _signal.rsrp = rsp->data.cellInfo.rsrp;
-            _signal.rsrq = rsp->data.cellInfo.rsrq;
-            _signal.sinr = rsp->data.cellInfo.cinr;  // CINR = SINR
-            _signal.rssi = rsp->data.cellInfo.rssi;
-            _signal.valid = true;
-            _signal.lastUpdateMs = millis();
+    // Use SERVING_CELL_WITH_CINR (type 9) to get SINR/CINR values
+    if (WalterModem::getCellInformation(WALTER_MODEM_SQNMONI_REPORTS_SERVING_CELL_WITH_CINR, rsp)) {
+        // Extract signal quality metrics from cellInformation
+        // Values are floats in the structure
+        _signal.rsrp = (int16_t)rsp->data.cellInformation.rsrp;
+        _signal.rsrq = (int16_t)rsp->data.cellInformation.rsrq;
+        _signal.sinr = (int16_t)rsp->data.cellInformation.cinr;  // CINR = SINR
+        _signal.rssi = (int16_t)rsp->data.cellInformation.rssi;
+        _signal.valid = true;
+        _signal.lastUpdateMs = millis();
 
-            // Also update cell info while we have it
-            if (rsp->data.cellInfo.netName != nullptr) {
-                strncpy(_cell.operatorName, rsp->data.cellInfo.netName, sizeof(_cell.operatorName) - 1);
-            }
-            _cell.mcc = rsp->data.cellInfo.cc;
-            _cell.mnc = rsp->data.cellInfo.nc;
-            _cell.cellId = rsp->data.cellInfo.cid;
-            _cell.tac = rsp->data.cellInfo.tac;
-            _cell.band = rsp->data.cellInfo.band;
-
-            LOG_PRINTF("[NetStatus] Signal: RSRP=%d dBm, RSRQ=%d dB, SINR=%d dB, RSSI=%d dBm\n",
-                      _signal.rsrp, _signal.rsrq, _signal.sinr, _signal.rssi);
-            LOG_PRINTF("[NetStatus] Cell: %s (MCC=%u, MNC=%u, CID=%lu, Band=%u)\n",
-                      _cell.operatorName, _cell.mcc, _cell.mnc,
-                      (unsigned long)_cell.cellId, _cell.band);
-
-            success = true;
-        } else {
-            LOG_PRINTLN("[NetStatus] WARNING: Unexpected response type from getCellInformation");
+        // Also update cell info while we have it
+        if (rsp->data.cellInformation.netName != nullptr) {
+            strncpy(_cell.operatorName, rsp->data.cellInformation.netName, sizeof(_cell.operatorName) - 1);
         }
+        _cell.mcc = rsp->data.cellInformation.cc;
+        _cell.mnc = rsp->data.cellInformation.nc;
+        _cell.cellId = rsp->data.cellInformation.cid;
+        _cell.tac = rsp->data.cellInformation.tac;
+        _cell.band = rsp->data.cellInformation.band;
+
+        LOG_PRINTF("[NetStatus] Signal: RSRP=%d dBm, RSRQ=%d dB, SINR=%d dB, RSSI=%d dBm\n",
+                  _signal.rsrp, _signal.rsrq, _signal.sinr, _signal.rssi);
+        LOG_PRINTF("[NetStatus] Cell: %s (MCC=%u, MNC=%u, CID=%lu, Band=%u)\n",
+                  _cell.operatorName, _cell.mcc, _cell.mnc,
+                  (unsigned long)_cell.cellId, _cell.band);
+
+        success = true;
     } else {
         LOG_PRINTLN("[NetStatus] WARNING: getCellInformation failed - modem may not be connected");
         // Don't invalidate existing data, just note the failure
