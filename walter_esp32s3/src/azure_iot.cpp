@@ -198,15 +198,16 @@ bool AzureIoTClient::connect() {
     LOG_PRINTLN("[Azure] ========== TIMESTAMP SETUP ==========");
 
     // Try to get time from cellular network first
-    WalterModemRsp rsp = {};
+    // Allocate response on heap to reduce stack pressure (struct is ~200 bytes)
+    WalterModemRsp* rsp = (WalterModemRsp*)malloc(sizeof(WalterModemRsp));
     uint32_t now = 0;
 
     LOG_PRINTLN("[Azure] Requesting network time from modem (AT+CCLK)...");
-    if (WalterModem::getClock(&rsp)) {
-        if (rsp.type == WALTER_MODEM_RSP_DATA_TYPE_CLOCK && rsp.data.clock.epochTime > 1577836800) {
-            now = rsp.data.clock.epochTime;
+    if (rsp != nullptr && WalterModem::getClock(rsp)) {
+        if (rsp->type == WALTER_MODEM_RSP_DATA_TYPE_CLOCK && rsp->data.clock.epochTime > 1577836800) {
+            now = rsp->data.clock.epochTime;
             LOG_PRINTF("[Azure] Network time received: %lu (TZ offset: %d sec)\n",
-                      (unsigned long)now, rsp.data.clock.timeZoneOffset);
+                      (unsigned long)now, rsp->data.clock.timeZoneOffset);
 
             // Update system time so other code can use it
             struct timeval tv = { .tv_sec = (time_t)now, .tv_usec = 0 };
@@ -217,6 +218,9 @@ bool AzureIoTClient::connect() {
         }
     } else {
         LOG_PRINTLN("[Azure] Failed to get network time from modem");
+    }
+    if (rsp != nullptr) {
+        free(rsp);
     }
 
     // Fallback to system time
@@ -651,32 +655,47 @@ bool AzureIoTClient::generateSasToken(const char* resourceUri, const char* key,
     LOG_PRINTF("[Azure] Expiry time: %u\n", expiryTime);
     LOG_PRINTF("[Azure] Key length: %d\n", strlen(key));
 
-    // Decode base64 key
+    // Allocate working buffers on heap to avoid stack overflow
+    // These buffers total ~960 bytes which is too much for the stack
+    struct SasWorkBuffers {
+        char encodedUri[256];
+        char stringToSign[512];
+        char signatureB64[64];
+        char signatureEncoded[128];
+    };
+
+    SasWorkBuffers* buffers = (SasWorkBuffers*)malloc(sizeof(SasWorkBuffers));
+    if (buffers == nullptr) {
+        LOG_PRINTLN("[Azure] ERROR: Failed to allocate SAS token buffers");
+        return false;
+    }
+
+    // Decode base64 key (small enough for stack)
     uint8_t keyDecoded[64];
     size_t keyDecodedLen = base64Decode(key, strlen(key), keyDecoded, sizeof(keyDecoded));
     if (keyDecodedLen == 0) {
         LOG_PRINTLN("[Azure] ERROR: Failed to decode SAS key from base64");
+        free(buffers);
         return false;
     }
     LOG_PRINTF("[Azure] Decoded key length: %d bytes\n", keyDecodedLen);
 
     // URL encode resource URI
-    char encodedUri[256];
-    urlEncode(resourceUri, encodedUri, sizeof(encodedUri));
-    LOG_PRINTF("[Azure] URL-encoded URI: %s\n", encodedUri);
+    urlEncode(resourceUri, buffers->encodedUri, sizeof(buffers->encodedUri));
+    LOG_PRINTF("[Azure] URL-encoded URI: %s\n", buffers->encodedUri);
 
     // Build string to sign: {URL-encoded-resourceURI}\n{expiry}
-    char stringToSign[512];
-    snprintf(stringToSign, sizeof(stringToSign), "%s\n%u", encodedUri, expiryTime);
-    LOG_PRINTF("[Azure] String to sign: %s\\n%u\n", encodedUri, expiryTime);
-    LOG_PRINTF("[Azure] String to sign length: %d\n", strlen(stringToSign));
+    snprintf(buffers->stringToSign, sizeof(buffers->stringToSign), "%s\n%u", buffers->encodedUri, expiryTime);
+    LOG_PRINTF("[Azure] String to sign: %s\\n%u\n", buffers->encodedUri, expiryTime);
+    LOG_PRINTF("[Azure] String to sign length: %d\n", strlen(buffers->stringToSign));
 
     // Compute HMAC-SHA256
     uint8_t signature[32];
     if (!hmacSha256(keyDecoded, keyDecodedLen,
-                    (uint8_t*)stringToSign, strlen(stringToSign),
+                    (uint8_t*)buffers->stringToSign, strlen(buffers->stringToSign),
                     signature)) {
         LOG_PRINTLN("[Azure] ERROR: HMAC-SHA256 computation failed");
+        free(buffers);
         return false;
     }
     LOG_PRINTLN("[Azure] HMAC-SHA256 computed successfully");
@@ -686,60 +705,71 @@ bool AzureIoTClient::generateSasToken(const char* resourceUri, const char* key,
                signature[0], signature[1], signature[2], signature[3]);
 
     // Base64 encode signature
-    char signatureB64[64];
-    base64Encode(signature, 32, signatureB64, sizeof(signatureB64));
-    LOG_PRINTF("[Azure] Base64 signature: %s\n", signatureB64);
+    base64Encode(signature, 32, buffers->signatureB64, sizeof(buffers->signatureB64));
+    LOG_PRINTF("[Azure] Base64 signature: %s\n", buffers->signatureB64);
 
     // URL encode signature
-    char signatureEncoded[128];
-    urlEncode(signatureB64, signatureEncoded, sizeof(signatureEncoded));
-    LOG_PRINTF("[Azure] URL-encoded signature: %s\n", signatureEncoded);
+    urlEncode(buffers->signatureB64, buffers->signatureEncoded, sizeof(buffers->signatureEncoded));
+    LOG_PRINTF("[Azure] URL-encoded signature: %s\n", buffers->signatureEncoded);
 
     // Build SAS token
     // SharedAccessSignature sr={resourceUri}&sig={signature}&se={expiry}
     int tokenLen = snprintf(output, outputLen,
              "SharedAccessSignature sr=%s&sig=%s&se=%u",
-             encodedUri, signatureEncoded, expiryTime);
+             buffers->encodedUri, buffers->signatureEncoded, expiryTime);
 
     LOG_PRINTF("[Azure] SAS token generated, length: %d\n", tokenLen);
     LOG_PRINTLN("[Azure] ==========================================");
 
+    free(buffers);
     return true;
 }
 
 bool AzureIoTClient::hmacSha256(const uint8_t* key, size_t keyLen,
                                  const uint8_t* data, size_t dataLen,
                                  uint8_t* output) {
-    mbedtls_md_context_t ctx;
-    mbedtls_md_init(&ctx);
+    // Allocate mbedtls context on heap to avoid stack overflow
+    // The mbedtls_md_context_t struct is ~300-400 bytes
+    mbedtls_md_context_t* ctx = (mbedtls_md_context_t*)malloc(sizeof(mbedtls_md_context_t));
+    if (ctx == nullptr) {
+        LOG_PRINTLN("[Azure] ERROR: Failed to allocate HMAC context");
+        return false;
+    }
+    mbedtls_md_init(ctx);
 
     const mbedtls_md_info_t* mdInfo = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     if (mdInfo == nullptr) {
-        mbedtls_md_free(&ctx);
+        mbedtls_md_free(ctx);
+        free(ctx);
         return false;
     }
 
-    if (mbedtls_md_setup(&ctx, mdInfo, 1) != 0) {
-        mbedtls_md_free(&ctx);
+    if (mbedtls_md_setup(ctx, mdInfo, 1) != 0) {
+        mbedtls_md_free(ctx);
+        free(ctx);
         return false;
     }
 
-    if (mbedtls_md_hmac_starts(&ctx, key, keyLen) != 0) {
-        mbedtls_md_free(&ctx);
+    if (mbedtls_md_hmac_starts(ctx, key, keyLen) != 0) {
+        mbedtls_md_free(ctx);
+        free(ctx);
         return false;
     }
 
-    if (mbedtls_md_hmac_update(&ctx, data, dataLen) != 0) {
-        mbedtls_md_free(&ctx);
+    if (mbedtls_md_hmac_update(ctx, data, dataLen) != 0) {
+        mbedtls_md_free(ctx);
+        free(ctx);
         return false;
     }
 
-    if (mbedtls_md_hmac_finish(&ctx, output) != 0) {
-        mbedtls_md_free(&ctx);
+    if (mbedtls_md_hmac_finish(ctx, output) != 0) {
+        mbedtls_md_free(ctx);
+        free(ctx);
         return false;
     }
 
-    mbedtls_md_free(&ctx);
+    mbedtls_md_free(ctx);
+    free(ctx);
     return true;
 }
 
