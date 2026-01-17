@@ -194,55 +194,57 @@ bool AzureIoTClient::connect() {
         LOG_PRINTLN("[Azure] LTE network connected!");
     }
 
-    // Step 6: Get network time and generate SAS token
+    // Step 6: Get network time - REQUIRED for valid SAS tokens
+    // SAS tokens include expiry timestamps; wrong time = rejected tokens
     LOG_PRINTLN("[Azure] ========== TIMESTAMP SETUP ==========");
+    LOG_PRINTLN("[Azure] Network time is REQUIRED for SAS token generation");
 
-    // Try to get time from cellular network first
     // Allocate response on heap to reduce stack pressure (struct is ~200 bytes)
     WalterModemRsp* rsp = (WalterModemRsp*)malloc(sizeof(WalterModemRsp));
     uint32_t now = 0;
 
-    LOG_PRINTLN("[Azure] Requesting network time from modem (AT+CCLK)...");
-    if (rsp != nullptr && WalterModem::getClock(rsp)) {
-        if (rsp->type == WALTER_MODEM_RSP_DATA_TYPE_CLOCK && rsp->data.clock.epochTime > 1577836800) {
-            now = rsp->data.clock.epochTime;
-            LOG_PRINTF("[Azure] Network time received: %lu (TZ offset: %d sec)\n",
-                      (unsigned long)now, rsp->data.clock.timeZoneOffset);
+    // Retry getting network time - cellular networks sync time automatically after registration
+    const int maxTimeRetries = 10;
+    for (int retry = 1; retry <= maxTimeRetries && now == 0; retry++) {
+        LOG_PRINTF("[Azure] Requesting network time (attempt %d/%d)...\n", retry, maxTimeRetries);
 
-            // Update system time so other code can use it
-            struct timeval tv = { .tv_sec = (time_t)now, .tv_usec = 0 };
-            settimeofday(&tv, nullptr);
-            LOG_PRINTLN("[Azure] System time updated from network");
+        if (rsp != nullptr && WalterModem::getClock(rsp)) {
+            if (rsp->type == WALTER_MODEM_RSP_DATA_TYPE_CLOCK && rsp->data.clock.epochTime > 1577836800) {
+                now = rsp->data.clock.epochTime;
+                LOG_PRINTF("[Azure] Network time received: %lu (TZ offset: %d sec)\n",
+                          (unsigned long)now, rsp->data.clock.timeZoneOffset);
+
+                // Update system time so other code can use it
+                struct timeval tv = { .tv_sec = (time_t)now, .tv_usec = 0 };
+                settimeofday(&tv, nullptr);
+                LOG_PRINTLN("[Azure] System time synchronized from network");
+            } else {
+                LOG_PRINTLN("[Azure] Network time invalid or not yet available");
+            }
         } else {
-            LOG_PRINTLN("[Azure] Network time invalid or not available");
+            LOG_PRINTLN("[Azure] Failed to get time from modem");
         }
-    } else {
-        LOG_PRINTLN("[Azure] Failed to get network time from modem");
+
+        if (now == 0 && retry < maxTimeRetries) {
+            LOG_PRINTLN("[Azure] Waiting 3 seconds for network time sync...");
+            delay(3000);
+        }
     }
+
     if (rsp != nullptr) {
         free(rsp);
     }
 
-    // Fallback to system time
-    if (now == 0) {
-        now = time(nullptr);
-        LOG_PRINTF("[Azure] System time from time(): %lu\n", (unsigned long)now);
-    }
-
-    // Check if time is reasonable (after year 2020)
-    // 1577836800 = Jan 1, 2020 00:00:00 UTC
+    // Check if we got valid time - this is REQUIRED, no fallback
     if (now < 1577836800) {
-        // Time not set - use a hardcoded timestamp for this deployment
-        // Jan 16, 2026 00:00:00 UTC = 1736985600
-        now = 1736985600;
-        LOG_PRINTLN("[Azure] WARNING: Time not set, using hardcoded timestamp");
-        LOG_PRINTLN("[Azure] Hardcoded: Jan 16, 2026 00:00:00 UTC");
-        LOG_PRINTLN("[Azure] SAS token may be rejected if actual date differs!");
-    } else {
-        LOG_PRINTLN("[Azure] Using valid timestamp");
+        LOG_PRINTLN("[Azure] ERROR: Could not obtain valid network time!");
+        LOG_PRINTLN("[Azure] SAS tokens require accurate timestamps.");
+        LOG_PRINTLN("[Azure] Will retry connection later when time is available.");
+        return false;
     }
 
-    LOG_PRINTF("[Azure] Current timestamp (used): %lu\n", (unsigned long)now);
+    LOG_PRINTLN("[Azure] Valid network time obtained");
+    LOG_PRINTF("[Azure] Current timestamp: %lu\n", (unsigned long)now);
 
     // Calculate expiry - Azure allows up to 365 days, we use 24 hours default
     uint32_t expiry = now + (AZURE_SAS_TTL_HOURS * 3600);

@@ -111,6 +111,16 @@ public:
     uint32_t getDroppedCount() const { return _droppedCount; }
 
     /**
+     * @brief Get last sample value (raw 24-bit signed)
+     */
+    int32_t getLastSample() const { return _lastSample; }
+
+    /**
+     * @brief Get last sample as voltage (assuming 2.5V reference, gain=1)
+     */
+    float getLastVoltage() const { return (_lastSample / 8388607.0f) * 2.5f; }
+
+    /**
      * @brief ISR handler - called from DRDY interrupt
      */
     static void IRAM_ATTR drdyISR();
@@ -138,6 +148,7 @@ private:
     // Statistics
     volatile uint32_t _sampleCount;
     volatile uint32_t _droppedCount;
+    volatile int32_t  _lastSample;
 
     // Sampling task
     static ADS1256* _instance;

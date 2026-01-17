@@ -29,6 +29,7 @@ ADS1256::ADS1256(SPIClass& spi)
     , _currentChannel(0)
     , _sampleCount(0)
     , _droppedCount(0)
+    , _lastSample(0)
     , _samplingTask(nullptr)
     , _ringBuffer(nullptr)
     , _stopRequested(false)
@@ -512,8 +513,9 @@ void ADS1256::samplingTaskFunc(void* param) {
                 value -= 0x1000000;
             }
 
-            // Store in frame buffer
+            // Store in frame buffer and update last sample for status display
             frame->samples[sampleIndex++] = value;
+            adc->_lastSample = value;
             adc->_sampleCount++;
 
             _drdyFlag = false;

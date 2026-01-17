@@ -87,7 +87,11 @@ void printStatus() {
 
     LOG_PRINTF("\n[Status] Uptime: %02d:%02d:%02d | ", hours, mins, secs);
     LOG_PRINTF("Heap: %d | ", ESP.getFreeHeap());
-    LOG_PRINTF("ADC: %u | ", adc ? adc->getSampleCount() : 0);
+    if (adc && adcAvailable) {
+        LOG_PRINTF("ADC: %.4fV (%u samples) | ", adc->getLastVoltage(), adc->getSampleCount());
+    } else {
+        LOG_PRINT("ADC: N/A | ");
+    }
     LOG_PRINTF("Frames: %u | ", ringBuffer ? ringBuffer->getFrameCount() : 0);
     LOG_PRINTF("Azure: %u | ", azureClient ? azureClient->getPublishCount() : 0);
     LOG_PRINTF("WS: %d | ", webServer ? webServer->getClientCount() : 0);

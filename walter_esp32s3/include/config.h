@@ -83,8 +83,9 @@
 #define AZURE_SAS_TTL_HOURS     24          // SAS token validity
 
 // MQTT Topics
-// devices/{device-id}/messages/events/
-#define AZURE_TELEMETRY_TOPIC   "devices/" AZURE_DEVICE_ID "/messages/events/"
+// devices/{device-id}/messages/events/{properties}
+// Properties include content-type ($.ct) and encoding ($.ce) so Azure decodes JSON properly
+#define AZURE_TELEMETRY_TOPIC   "devices/" AZURE_DEVICE_ID "/messages/events/$.ct=application%2Fjson&$.ce=utf-8"
 
 // =============================================================================
 // LTE MODEM CONFIGURATION (Sequans GM02SP via Walter)
