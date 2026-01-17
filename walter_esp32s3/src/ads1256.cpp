@@ -8,6 +8,7 @@
 
 #include "ads1256.h"
 #include <esp_timer.h>
+#include <esp_task_wdt.h>
 
 // Static member initialization
 ADS1256* ADS1256::_instance = nullptr;
@@ -368,26 +369,38 @@ void ADS1256::startSamplingTask(AdcRingBuffer* ringBuffer, TaskHandle_t* taskHan
 
     _ringBuffer = ringBuffer;
     _stopRequested = false;
+    _taskToNotify = nullptr;  // Clear until task is ready
 
-    // Create the sampling task
-    xTaskCreatePinnedToCore(
+    LOG_PRINTLN("[ADS1256] Creating sampling task...");
+    Serial.flush();  // Ensure output before task creation
+
+    // Create the sampling task - use Core 0 for stability (Core 1 can have issues)
+    // Stack size in WORDS (4 bytes each on ESP32)
+    BaseType_t result = xTaskCreatePinnedToCore(
         samplingTaskFunc,
         "ADC_Sample",
-        TASK_STACK_ADC,
+        TASK_STACK_ADC,     // 4096 words = 16KB
         this,
-        TASK_PRIORITY_ADC,
+        TASK_PRIORITY_ADC,  // Priority 5
         &_samplingTask,
-        TASK_CORE_ADC
+        0                   // Core 0 for better stability
     );
+
+    if (result != pdPASS) {
+        LOG_PRINTLN("[ADS1256] ERROR: Failed to create sampling task!");
+        _samplingTask = nullptr;
+        if (taskHandle) {
+            *taskHandle = nullptr;
+        }
+        return;
+    }
 
     if (taskHandle) {
         *taskHandle = _samplingTask;
     }
 
-    // NOTE: Interrupt is attached inside the task after it's ready
-    // This prevents race conditions where ISR fires before task is initialized
-
-    LOG_PRINTLN("[ADS1256] Sampling task started");
+    LOG_PRINTLN("[ADS1256] Sampling task created successfully");
+    Serial.flush();
 }
 
 void ADS1256::stopSamplingTask() {
@@ -408,49 +421,90 @@ void ADS1256::stopSamplingTask() {
 void ADS1256::samplingTaskFunc(void* param) {
     ADS1256* adc = static_cast<ADS1256*>(param);
 
-    LOG_PRINTLN("[ADC Task] Task started, initializing...");
+    // =========================================================================
+    // ESP32/FreeRTOS Best Practices: Task Initialization
+    // =========================================================================
 
-    // Let other initialization complete first
-    vTaskDelay(pdMS_TO_TICKS(500));
+    LOG_PRINTLN("[ADC Task] === Task Started ===");
+    Serial.flush();
+
+    // Check stack high water mark
+    UBaseType_t stackHighWater = uxTaskGetStackHighWaterMark(NULL);
+    LOG_PRINTF("[ADC Task] Initial stack free: %u words\n", stackHighWater);
+    Serial.flush();
+
+    // Add this task to watchdog (optional, comment out if causing issues)
+    // esp_task_wdt_add(NULL);
+
+    // Yield immediately to let other tasks run
+    LOG_PRINTLN("[ADC Task] Yielding to let other tasks initialize...");
+    Serial.flush();
+    taskYIELD();
+
+    // Wait for system to stabilize
+    LOG_PRINTLN("[ADC Task] Waiting 1 second for system stability...");
+    Serial.flush();
+
+    for (int i = 0; i < 10; i++) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        // esp_task_wdt_reset();  // Feed watchdog if enabled
+    }
 
     LOG_PRINTLN("[ADC Task] Configuring ADC...");
+    Serial.flush();
 
     // Configure for 1000 SPS differential channel 0
     adc->configure(ADS_GAIN_4, ADS_DRATE_1000SPS);
+
+    LOG_PRINTLN("[ADC Task] Setting differential channel...");
+    Serial.flush();
     adc->setDiffChannel(0);
 
     LOG_PRINTLN("[ADC Task] Starting continuous mode...");
+    Serial.flush();
     adc->startContinuous();
 
+    // Check stack after configuration
+    stackHighWater = uxTaskGetStackHighWaterMark(NULL);
+    LOG_PRINTF("[ADC Task] Stack free after config: %u words\n", stackHighWater);
+    Serial.flush();
+
     // Now attach interrupt - task is ready to receive notifications
+    LOG_PRINTLN("[ADC Task] Attaching DRDY interrupt...");
+    Serial.flush();
+
     _taskToNotify = xTaskGetCurrentTaskHandle();
     attachInterrupt(digitalPinToInterrupt(PIN_ADS_DRDY), drdyISR, FALLING);
-    LOG_PRINTLN("[ADC Task] DRDY interrupt attached");
 
+    LOG_PRINTLN("[ADC Task] DRDY interrupt attached successfully");
+    Serial.flush();
+
+    // Initialize frame buffer
     AdcFrame frame;
     frame.sampleRateHz = SAMPLE_RATE_HZ;
     frame.numSamples = FRAME_SIZE;
 
     uint32_t sampleIndex = 0;
     uint32_t frameIndex = 0;
-    int64_t frameStartUs = 0;
+    int64_t frameStartUs = esp_timer_get_time();
     const int64_t samplePeriodUs = 1000000 / SAMPLE_RATE_HZ;
-    uint32_t yieldCounter = 0;
+    uint32_t loopCounter = 0;
 
-    // Get initial timestamp
-    frameStartUs = esp_timer_get_time();
-
-    LOG_PRINTLN("[ADC Task] Entering main sampling loop");
+    LOG_PRINTLN("[ADC Task] === Entering Main Sampling Loop ===");
+    Serial.flush();
 
     while (!adc->_stopRequested) {
         // Wait for DRDY interrupt (task notification) or timeout
-        // IMPORTANT: Use notification-only, don't poll isDataReady() which causes tight loop
-        uint32_t notifyValue = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2));
+        // This properly blocks and yields CPU to other tasks
+        uint32_t notifyValue = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
 
-        // Yield periodically to prevent starving other tasks
-        if (++yieldCounter >= 100) {
-            yieldCounter = 0;
+        // Periodic status and yield (every ~1000 loops = ~1 second at 1kHz)
+        if (++loopCounter >= 1000) {
+            loopCounter = 0;
             taskYIELD();
+            // Optional: Check stack health periodically
+            // UBaseType_t stackFree = uxTaskGetStackHighWaterMark(NULL);
+            // if (stackFree < 100) LOG_PRINTLN("[ADC Task] WARNING: Low stack!");
         }
 
         // Only read if we got a notification (DRDY interrupt fired)
