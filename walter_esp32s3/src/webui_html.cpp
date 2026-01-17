@@ -2,8 +2,8 @@
  * @file webui_html.cpp
  * @brief Embedded web UI HTML/JavaScript
  *
- * Complete oscilloscope interface with DSP filtering capabilities
- * including Butterworth bandpass, notch filters, and Lock-In amplifier.
+ * Complete oscilloscope interface with Canvas-based rendering.
+ * No external dependencies - works completely offline when connected to AP.
  */
 
 #include "webui.h"
@@ -70,13 +70,18 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     }
     button:hover { background: #444; }
     button.active { background: #0a5; border-color: #0c7; }
-    button.lockin { background: #a50; border-color: #c70; }
 
-    #scope {
+    #scope-container {
       flex: 1;
       min-height: 200px;
       border: 1px solid #333;
       background: #000;
+      position: relative;
+    }
+
+    #scope {
+      width: 100%;
+      height: 100%;
     }
 
     .panel {
@@ -88,7 +93,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       flex-shrink: 0;
     }
 
-    .filter-bar {
+    .control-bar {
       display: flex;
       gap: 12px;
       align-items: center;
@@ -110,7 +115,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       font-family: monospace;
       font-size: 14px;
       color: #0ff;
-      min-width: 40px;
+      min-width: 50px;
       text-align: center;
     }
 
@@ -120,72 +125,18 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     }
 
     #stats {
-      font-size: 10px;
-      color: #666;
-      margin-top: 8px;
-    }
-
-    /* Advanced panel */
-    #advanced {
-      display: none;
-      margin-top: 8px;
-    }
-    #advanced.show { display: block; }
-
-    .adv-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 8px;
-    }
-
-    .filter-section {
-      background: #222;
-      border-radius: 4px;
-      padding: 8px;
-    }
-    .filter-section h4 {
-      margin: 0 0 6px 0;
-      font-size: 10px;
+      font-size: 11px;
       color: #888;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-    }
-    .param {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      margin: 4px 0;
-    }
-    .param label {
-      flex: 0 0 80px;
-      font-size: 10px;
-      color: #aaa;
-    }
-    .param input[type="range"] {
-      flex: 1;
-      accent-color: #0a5;
-    }
-    .param .pval {
-      flex: 0 0 45px;
-      text-align: right;
+      margin-top: 8px;
       font-family: monospace;
-      font-size: 10px;
-      color: #0ff;
     }
-    .param input[type="checkbox"] {
-      accent-color: #0a5;
-    }
-    .param select {
-      flex: 1;
-      background: #333;
-      color: #eee;
-      border: 1px solid #444;
-      border-radius: 3px;
-      padding: 2px;
-      font-size: 10px;
+
+    #last-val {
+      color: #0f0;
+      font-size: 14px;
+      font-family: monospace;
     }
   </style>
-  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
 <body>
   <header>
@@ -195,460 +146,235 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
   <div id="container">
     <div id="controls">
-      <button id="btn-live">Jump to Live</button>
-      <span style="color:#666;font-size:11px">Buffer: 30s</span>
-      <span id="view-time" style="font-family:monospace;font-size:11px;color:#888"></span>
+      <button id="btn-pause">Pause</button>
+      <button id="btn-clear">Clear</button>
+      <span style="color:#666;font-size:11px">|</span>
+      <span id="last-val">--</span>
     </div>
 
-    <div id="scope"></div>
+    <div id="scope-container">
+      <canvas id="scope"></canvas>
+    </div>
 
     <div class="panel">
-      <div class="filter-bar">
-        <button id="btn-filter">Enable Filter</button>
-        <button id="btn-lockin">Lock-In Amp</button>
-
-        <div class="control-group" id="freq-ctrl" style="display:none">
-          <label>Freq:</label>
-          <button class="small-btn" id="freq-down">-</button>
-          <span class="value" id="freq-val">22</span>
-          <span style="color:#666;font-size:10px">Hz</span>
-          <button class="small-btn" id="freq-up">+</button>
+      <div class="control-bar">
+        <div class="control-group">
+          <label>Time/div:</label>
+          <button class="small-btn" id="time-down">-</button>
+          <span class="value" id="time-val">100ms</span>
+          <button class="small-btn" id="time-up">+</button>
         </div>
 
-        <div class="control-group" id="notch-ctrl" style="display:none">
-          <label>60Hz:</label>
-          <button class="small-btn active" id="btn-notch">ON</button>
+        <div class="control-group">
+          <label>V/div:</label>
+          <button class="small-btn" id="volt-down">-</button>
+          <span class="value" id="volt-val">Auto</span>
+          <button class="small-btn" id="volt-up">+</button>
         </div>
 
-        <div class="control-group" id="pga-ctrl">
+        <div class="control-group">
           <label>PGA:</label>
           <button class="small-btn" id="pga-down">-</button>
           <span class="value" id="pga-val">4x</span>
           <button class="small-btn" id="pga-up">+</button>
         </div>
-
-        <button id="btn-adv" style="margin-left:auto">Advanced</button>
       </div>
 
-      <div id="advanced">
-        <div class="adv-grid">
-          <div class="filter-section">
-            <h4>Bandpass Filter</h4>
-            <div class="param">
-              <label>Center:</label>
-              <input type="range" id="bp-fc" min="10" max="50" value="22" step="1">
-              <span class="pval" id="bp-fc-val">22 Hz</span>
-            </div>
-            <div class="param">
-              <label>Bandwidth:</label>
-              <input type="range" id="bp-bw" min="2" max="30" value="10" step="1">
-              <span class="pval" id="bp-bw-val">10 Hz</span>
-            </div>
-            <div class="param">
-              <label>Order:</label>
-              <input type="range" id="bp-ord" min="2" max="8" value="4" step="2">
-              <span class="pval" id="bp-ord-val">4</span>
-            </div>
-          </div>
-
-          <div class="filter-section">
-            <h4>60 Hz Notch</h4>
-            <div class="param">
-              <label>Enabled:</label>
-              <input type="checkbox" id="notch-en" checked>
-            </div>
-            <div class="param">
-              <label>Frequency:</label>
-              <input type="range" id="notch-f" min="55" max="65" value="60" step="0.5">
-              <span class="pval" id="notch-f-val">60 Hz</span>
-            </div>
-            <div class="param">
-              <label>Q:</label>
-              <input type="range" id="notch-q" min="10" max="100" value="35" step="5">
-              <span class="pval" id="notch-q-val">35</span>
-            </div>
-            <div class="param">
-              <label>Stages:</label>
-              <input type="range" id="notch-n" min="1" max="4" value="2" step="1">
-              <span class="pval" id="notch-n-val">2</span>
-            </div>
-          </div>
-
-          <div class="filter-section">
-            <h4>Lock-In Amplifier</h4>
-            <div class="param">
-              <label>Ref Freq:</label>
-              <input type="range" id="lia-f" min="10" max="50" value="22" step="0.5">
-              <span class="pval" id="lia-f-val">22 Hz</span>
-            </div>
-            <div class="param">
-              <label>Time Const:</label>
-              <input type="range" id="lia-tc" min="0.01" max="1" value="0.1" step="0.01">
-              <span class="pval" id="lia-tc-val">100 ms</span>
-            </div>
-            <div class="param">
-              <label>Output:</label>
-              <select id="lia-out">
-                <option value="mag">Magnitude</option>
-                <option value="i">In-Phase</option>
-                <option value="q">Quadrature</option>
-                <option value="filt">Filtered</option>
-              </select>
-            </div>
-          </div>
-        </div>
+      <div id="stats">
+        Frames: 0 | Samples: 0 | Rate: -- Hz
       </div>
-
-      <div id="stats"></div>
     </div>
   </div>
 
   <script>
     // =========================================================================
-    // DSP LIBRARY
+    // CANVAS OSCILLOSCOPE
     // =========================================================================
 
-    class Biquad {
-      constructor(b0,b1,b2,a1,a2) {
-        this.b0=b0; this.b1=b1; this.b2=b2; this.a1=a1; this.a2=a2;
-        this.z1=0; this.z2=0;
-      }
-      reset() { this.z1=0; this.z2=0; }
-      process(x) {
-        const y = this.b0*x + this.z1;
-        this.z1 = this.b1*x - this.a1*y + this.z2;
-        this.z2 = this.b2*x - this.a2*y;
-        return y;
-      }
-    }
+    const canvas = document.getElementById('scope');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const statsEl = document.getElementById('stats');
+    const lastValEl = document.getElementById('last-val');
 
-    class FilterChain {
-      constructor(sections) { this.sections = sections; }
-      reset() { this.sections.forEach(s => s.reset()); }
-      processArray(inp) {
-        const out = new Float64Array(inp.length);
-        for (let i=0; i<inp.length; i++) {
-          let x = inp[i];
-          for (const s of this.sections) x = s.process(x);
-          out[i] = x;
-        }
-        return out;
-      }
-    }
-
-    function designLP2(fc, Q, fs) {
-      const w0 = 2*Math.PI*fc/fs;
-      const alpha = Math.sin(w0)/(2*Q);
-      const cw0 = Math.cos(w0);
-      const b0 = (1-cw0)/2, b1 = 1-cw0, b2 = (1-cw0)/2;
-      const a0 = 1+alpha, a1 = -2*cw0, a2 = 1-alpha;
-      return new Biquad(b0/a0, b1/a0, b2/a0, a1/a0, a2/a0);
-    }
-
-    function designHP2(fc, Q, fs) {
-      const w0 = 2*Math.PI*fc/fs;
-      const alpha = Math.sin(w0)/(2*Q);
-      const cw0 = Math.cos(w0);
-      const b0 = (1+cw0)/2, b1 = -(1+cw0), b2 = (1+cw0)/2;
-      const a0 = 1+alpha, a1 = -2*cw0, a2 = 1-alpha;
-      return new Biquad(b0/a0, b1/a0, b2/a0, a1/a0, a2/a0);
-    }
-
-    function designNotch2(f0, Q, fs) {
-      const w0 = 2*Math.PI*f0/fs;
-      const alpha = Math.sin(w0)/(2*Q);
-      const cw0 = Math.cos(w0);
-      const a0 = 1+alpha;
-      return new Biquad(1/a0, -2*cw0/a0, 1/a0, -2*cw0/a0, (1-alpha)/a0);
-    }
-
-    function designButterworthBP(fc, bw, fs, order) {
-      const sections = [];
-      const fLow = fc - bw/2, fHigh = fc + bw/2;
-      const n = order/2;
-      const Qs = [];
-      for (let k=0; k<n; k++) Qs.push(1/(2*Math.cos(Math.PI*(2*k+1)/(4*n))));
-      for (let k=0; k<n; k++) {
-        sections.push(designHP2(fLow, Qs[k], fs));
-        sections.push(designLP2(fHigh, Qs[k], fs));
-      }
-      return new FilterChain(sections);
-    }
-
-    function designNotchFilter(f0, Q, fs, stages) {
-      const sections = [];
-      for (let i=0; i<stages; i++) sections.push(designNotch2(f0, Q, fs));
-      return new FilterChain(sections);
-    }
-
-    class LockInAmplifier {
-      constructor(refFreq, tc, fs) {
-        this.refFreq = refFreq;
-        this.fs = fs;
-        this.omega = 2*Math.PI*refFreq/fs;
-        this.phase = 0;
-        this.setTC(tc);
-      }
-      setTC(tc) {
-        this.tc = tc;
-        const lpFreq = 1/(2*Math.PI*tc);
-        this.lpI = designLP2(lpFreq, 0.707, this.fs);
-        this.lpQ = designLP2(lpFreq, 0.707, this.fs);
-      }
-      setFreq(f) { this.refFreq = f; this.omega = 2*Math.PI*f/this.fs; }
-      reset() { this.phase = 0; this.lpI.reset(); this.lpQ.reset(); }
-      processArray(inp, outType) {
-        const n = inp.length;
-        const out = new Float64Array(n);
-        for (let i=0; i<n; i++) {
-          const sinR = Math.sin(this.phase);
-          const cosR = Math.cos(this.phase);
-          this.phase += this.omega;
-          if (this.phase > 2*Math.PI) this.phase -= 2*Math.PI;
-          const I = this.lpI.process(inp[i]*sinR*2);
-          const Q = this.lpQ.process(inp[i]*cosR*2);
-          switch(outType) {
-            case 'i': out[i] = I; break;
-            case 'q': out[i] = Q; break;
-            case 'filt': out[i] = I*Math.sin(this.phase) + Q*Math.cos(this.phase); break;
-            default: out[i] = Math.sqrt(I*I + Q*Q);
-          }
-        }
-        return out;
-      }
-    }
-
-    // =========================================================================
-    // FILTER STATE
-    // =========================================================================
-
-    const filt = {
-      enabled: false,
-      lockIn: false,
-      fs: 1000,
-      bpFc: 22, bpBw: 10, bpOrd: 4,
-      notchEn: true, notchF: 60, notchQ: 35, notchN: 2,
-      liaF: 22, liaTc: 0.1, liaOut: 'mag',
-      bp: null, notch: null, lia: null
-    };
-
-    function rebuildFilters() {
-      filt.bp = designButterworthBP(filt.bpFc, filt.bpBw, filt.fs, filt.bpOrd);
-      filt.notch = filt.notchEn ? designNotchFilter(filt.notchF, filt.notchQ, filt.fs, filt.notchN) : null;
-      if (!filt.lia) filt.lia = new LockInAmplifier(filt.liaF, filt.liaTc, filt.fs);
-      else { filt.lia.setFreq(filt.liaF); filt.lia.setTC(filt.liaTc); }
-    }
-
-    function applyFilters(samples) {
-      let result = samples;
-      if (filt.lockIn) {
-        if (filt.notch) result = filt.notch.processArray(result);
-        result = filt.lia.processArray(result, filt.liaOut);
-        return Array.from(result);
-      }
-      if (filt.enabled) {
-        if (filt.notch) result = filt.notch.processArray(result);
-        if (filt.bp) result = filt.bp.processArray(result);
-      }
-      return Array.from(result);
-    }
-
-    // =========================================================================
-    // CHART
-    // =========================================================================
-
-    const BUFFER_SEC = 30;
-    const SAMPLE_RATE = 1000;
-    const MAX_PTS = BUFFER_SEC * SAMPLE_RATE;
-
-    let plotInit = false;
-    let followLive = true;
-    let suppressRelayout = false;
-    let nextTime = null;
-    let lastTime = null;
+    // Data buffer - circular buffer of samples
+    const BUFFER_SIZE = 30000; // 30 seconds at 1kHz
+    const dataBuffer = new Float32Array(BUFFER_SIZE);
+    let writeIdx = 0;
+    let sampleCount = 0;
     let frameCount = 0;
+    let lastFrameTime = 0;
+    let fps = 0;
 
-    function initPlot() {
-      Plotly.newPlot('scope', [{
-        x: [], y: [],
-        mode: 'lines',
-        line: { width: 1, color: '#00ff88' }
-      }], {
-        margin: { l: 50, r: 10, t: 5, b: 25 },
-        paper_bgcolor: '#000',
-        plot_bgcolor: '#000',
-        showlegend: false,
-        xaxis: { title: 'Time (s)', showgrid: true, gridcolor: '#222', tickfont: { color: '#888', size: 9 } },
-        yaxis: { title: 'Counts', showgrid: true, gridcolor: '#222', tickfont: { color: '#888', size: 9 }, autorange: true }
-      }, { responsive: true, displaylogo: false, modeBarButtonsToRemove: ['select2d', 'lasso2d'] }).then(gd => {
-        gd.on('plotly_relayout', () => { if (!suppressRelayout) followLive = false; });
-      });
-      plotInit = true;
+    // Display settings
+    const TIME_DIVS = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000]; // ms per division
+    let timeIdx = 3; // 100ms default
+    const VOLT_DIVS = [0, 100000, 500000, 1000000, 2000000, 5000000]; // 0 = auto
+    let voltIdx = 0; // auto
+    let paused = false;
+
+    // PGA settings
+    const PGA = [1, 2, 4, 8, 16, 32, 64];
+    let pgaIdx = 2; // 4x default
+
+    // Convert raw ADC count to voltage (2.5V ref, gain from PGA)
+    function countsToVolts(counts) {
+      return (counts / 8388607.0) * 2.5 / PGA[pgaIdx];
     }
 
-    function setLiveView() {
-      if (lastTime == null) return;
-      suppressRelayout = true;
-      Plotly.relayout('scope', { 'xaxis.range': [lastTime - BUFFER_SEC, lastTime] }).then(() => { suppressRelayout = false; });
+    // Resize canvas to match container
+    function resizeCanvas() {
+      const container = document.getElementById('scope-container');
+      const rect = container.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
     }
 
-    function appendFrame(msg) {
-      if (!plotInit) initPlot();
-      let geo = msg.geo;
-      if (!geo || !geo.length) return;
+    // Draw oscilloscope
+    function draw() {
+      if (!canvas.width || !canvas.height) {
+        resizeCanvas();
+      }
 
-      const dt = 1.0 / SAMPLE_RATE;
-      if (nextTime === null) nextTime = msg.t0 || 0;
+      const w = canvas.width;
+      const h = canvas.height;
 
-      if (filt.enabled || filt.lockIn) geo = applyFilters(geo);
+      // Clear
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
 
-      const xs = new Array(geo.length);
-      for (let i = 0; i < geo.length; i++) xs[i] = nextTime + i * dt;
-      nextTime += geo.length * dt;
-      lastTime = xs[geo.length - 1];
+      // Grid
+      const divisions = 10;
+      ctx.strokeStyle = '#222';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 1; i < divisions; i++) {
+        const x = (w / divisions) * i;
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+      }
+      for (let i = 1; i < 8; i++) {
+        const y = (h / 8) * i;
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+      }
+      ctx.stroke();
+
+      // Center line
+      ctx.strokeStyle = '#333';
+      ctx.beginPath();
+      ctx.moveTo(0, h / 2);
+      ctx.lineTo(w, h / 2);
+      ctx.stroke();
+
+      // No data yet
+      if (sampleCount === 0) {
+        ctx.fillStyle = '#444';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Waiting for data...', w / 2, h / 2);
+        requestAnimationFrame(draw);
+        return;
+      }
+
+      // Calculate how many samples to show
+      const msPerDiv = TIME_DIVS[timeIdx];
+      const totalMs = msPerDiv * divisions;
+      const samplesToShow = Math.min(totalMs, BUFFER_SIZE, sampleCount);
+
+      // Get data range for auto-scaling
+      let minVal = Infinity, maxVal = -Infinity;
+      const startIdx = (writeIdx - samplesToShow + BUFFER_SIZE) % BUFFER_SIZE;
+      for (let i = 0; i < samplesToShow; i++) {
+        const idx = (startIdx + i) % BUFFER_SIZE;
+        const v = dataBuffer[idx];
+        if (v < minVal) minVal = v;
+        if (v > maxVal) maxVal = v;
+      }
+
+      // Scale
+      let yRange;
+      if (voltIdx === 0) {
+        // Auto scale
+        const range = maxVal - minVal;
+        yRange = range > 0 ? range * 1.2 : 1000000; // 20% margin
+      } else {
+        yRange = VOLT_DIVS[voltIdx] * 8; // 8 vertical divisions
+      }
+      const yCenter = (minVal + maxVal) / 2;
+
+      // Draw waveform
+      ctx.strokeStyle = '#0f8';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+
+      for (let i = 0; i < samplesToShow; i++) {
+        const idx = (startIdx + i) % BUFFER_SIZE;
+        const x = (i / samplesToShow) * w;
+        const y = h / 2 - ((dataBuffer[idx] - yCenter) / yRange) * h;
+
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+
+      // Scale labels
+      ctx.fillStyle = '#666';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(countsToVolts(yCenter + yRange / 2).toFixed(4) + 'V', 4, 12);
+      ctx.fillText(countsToVolts(yCenter - yRange / 2).toFixed(4) + 'V', 4, h - 4);
+
+      ctx.textAlign = 'right';
+      ctx.fillText(totalMs + 'ms', w - 4, h - 4);
+
+      if (!paused) {
+        requestAnimationFrame(draw);
+      }
+    }
+
+    // Add samples to buffer
+    function addSamples(samples) {
+      if (paused) return;
+
+      for (let i = 0; i < samples.length; i++) {
+        dataBuffer[writeIdx] = samples[i];
+        writeIdx = (writeIdx + 1) % BUFFER_SIZE;
+        sampleCount++;
+      }
+
+      // Update last value display
+      const lastVal = samples[samples.length - 1];
+      const volts = countsToVolts(lastVal);
+      lastValEl.textContent = volts.toFixed(5) + ' V (' + lastVal + ')';
+
+      // Update stats
       frameCount++;
-
-      Plotly.extendTraces('scope', { x: [xs], y: [geo] }, [0], MAX_PTS);
-
-      const mode = filt.lockIn ? ' [LOCK-IN]' : (filt.enabled ? ' [FILTERED]' : '');
-      document.getElementById('view-time').textContent = lastTime.toFixed(1) + 's' + mode;
-
-      if (followLive) setLiveView();
-
-      document.getElementById('stats').textContent = 'Frames: ' + frameCount;
+      const now = performance.now();
+      if (now - lastFrameTime > 1000) {
+        fps = Math.round(frameCount * 1000 / (now - lastFrameTime));
+        frameCount = 0;
+        lastFrameTime = now;
+      }
+      statsEl.textContent = 'Frames: ' + Math.floor(sampleCount / 1000) +
+        ' | Samples: ' + sampleCount +
+        ' | Rate: ' + (fps * 1000) + ' sps';
     }
 
-    // =========================================================================
-    // UI
-    // =========================================================================
-
-    const PGA = [1,2,4,8,16,32,64];
-    let pgaIdx = 2;
-
-    function initUI() {
-      const btnFilter = document.getElementById('btn-filter');
-      const btnLockin = document.getElementById('btn-lockin');
-      const freqCtrl = document.getElementById('freq-ctrl');
-      const notchCtrl = document.getElementById('notch-ctrl');
-
-      btnFilter.onclick = () => {
-        filt.enabled = !filt.enabled;
-        filt.lockIn = false;
-        btnFilter.classList.toggle('active', filt.enabled);
-        btnLockin.classList.remove('lockin');
-        freqCtrl.style.display = filt.enabled ? 'flex' : 'none';
-        notchCtrl.style.display = filt.enabled ? 'flex' : 'none';
-        btnFilter.textContent = filt.enabled ? 'Filter ON' : 'Enable Filter';
-        rebuildFilters();
-      };
-
-      btnLockin.onclick = () => {
-        filt.lockIn = !filt.lockIn;
-        filt.enabled = false;
-        btnLockin.classList.toggle('lockin', filt.lockIn);
-        btnFilter.classList.remove('active');
-        btnFilter.textContent = 'Enable Filter';
-        freqCtrl.style.display = filt.lockIn ? 'flex' : 'none';
-        notchCtrl.style.display = filt.lockIn ? 'flex' : 'none';
-        btnLockin.textContent = filt.lockIn ? 'Lock-In ON' : 'Lock-In Amp';
-        rebuildFilters();
-      };
-
-      document.getElementById('freq-down').onclick = () => {
-        filt.bpFc = Math.max(10, filt.bpFc - 1);
-        filt.liaF = filt.bpFc;
-        document.getElementById('freq-val').textContent = filt.bpFc;
-        document.getElementById('bp-fc').value = filt.bpFc;
-        document.getElementById('bp-fc-val').textContent = filt.bpFc + ' Hz';
-        document.getElementById('lia-f').value = filt.liaF;
-        document.getElementById('lia-f-val').textContent = filt.liaF + ' Hz';
-        rebuildFilters();
-      };
-
-      document.getElementById('freq-up').onclick = () => {
-        filt.bpFc = Math.min(50, filt.bpFc + 1);
-        filt.liaF = filt.bpFc;
-        document.getElementById('freq-val').textContent = filt.bpFc;
-        document.getElementById('bp-fc').value = filt.bpFc;
-        document.getElementById('bp-fc-val').textContent = filt.bpFc + ' Hz';
-        document.getElementById('lia-f').value = filt.liaF;
-        document.getElementById('lia-f-val').textContent = filt.liaF + ' Hz';
-        rebuildFilters();
-      };
-
-      document.getElementById('btn-notch').onclick = function() {
-        filt.notchEn = !filt.notchEn;
-        this.classList.toggle('active', filt.notchEn);
-        this.textContent = filt.notchEn ? 'ON' : 'OFF';
-        document.getElementById('notch-en').checked = filt.notchEn;
-        rebuildFilters();
-      };
-
-      document.getElementById('pga-down').onclick = () => {
-        pgaIdx = Math.max(0, pgaIdx - 1);
-        document.getElementById('pga-val').textContent = PGA[pgaIdx] + 'x';
-      };
-      document.getElementById('pga-up').onclick = () => {
-        pgaIdx = Math.min(PGA.length - 1, pgaIdx + 1);
-        document.getElementById('pga-val').textContent = PGA[pgaIdx] + 'x';
-      };
-
-      document.getElementById('btn-adv').onclick = () => {
-        document.getElementById('advanced').classList.toggle('show');
-      };
-
-      document.getElementById('btn-live').onclick = () => { followLive = true; setLiveView(); };
-
-      // Advanced controls
-      const bindSlider = (id, obj, prop, suffix, cb) => {
-        const el = document.getElementById(id);
-        const valEl = document.getElementById(id + '-val');
-        el.oninput = () => {
-          obj[prop] = parseFloat(el.value);
-          valEl.textContent = (prop === 'liaTc' ? (obj[prop]*1000).toFixed(0) + ' ms' : obj[prop] + (suffix||''));
-          if (cb) cb();
-          rebuildFilters();
-        };
-      };
-
-      bindSlider('bp-fc', filt, 'bpFc', ' Hz', () => {
-        filt.liaF = filt.bpFc;
-        document.getElementById('freq-val').textContent = filt.bpFc;
-        document.getElementById('lia-f').value = filt.liaF;
-        document.getElementById('lia-f-val').textContent = filt.liaF + ' Hz';
-      });
-      bindSlider('bp-bw', filt, 'bpBw', ' Hz');
-      bindSlider('bp-ord', filt, 'bpOrd', '');
-      bindSlider('notch-f', filt, 'notchF', ' Hz');
-      bindSlider('notch-q', filt, 'notchQ', '');
-      bindSlider('notch-n', filt, 'notchN', '');
-      bindSlider('lia-f', filt, 'liaF', ' Hz', () => {
-        filt.bpFc = filt.liaF;
-        document.getElementById('freq-val').textContent = filt.liaF;
-        document.getElementById('bp-fc').value = filt.bpFc;
-        document.getElementById('bp-fc-val').textContent = filt.bpFc + ' Hz';
-      });
-      bindSlider('lia-tc', filt, 'liaTc');
-
-      document.getElementById('notch-en').onchange = function() {
-        filt.notchEn = this.checked;
-        document.getElementById('btn-notch').classList.toggle('active', filt.notchEn);
-        document.getElementById('btn-notch').textContent = filt.notchEn ? 'ON' : 'OFF';
-        rebuildFilters();
-      };
-
-      document.getElementById('lia-out').onchange = function() {
-        filt.liaOut = this.value;
-      };
-
-      rebuildFilters();
+    // Clear buffer
+    function clearBuffer() {
+      dataBuffer.fill(0);
+      writeIdx = 0;
+      sampleCount = 0;
+      frameCount = 0;
     }
 
     // =========================================================================
     // WEBSOCKET
     // =========================================================================
-
-    const statusEl = document.getElementById('status');
 
     function connectWS() {
       const ws = new WebSocket('ws://' + location.host + '/ws');
@@ -658,33 +384,97 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       ws.onopen = () => {
         statusEl.textContent = 'Connected';
         statusEl.className = 'connected';
+        console.log('[WS] Connected');
       };
 
       ws.onclose = () => {
         statusEl.textContent = 'Reconnecting...';
         statusEl.className = 'connecting';
+        console.log('[WS] Disconnected, reconnecting in 2s...');
         setTimeout(connectWS, 2000);
       };
 
-      ws.onerror = () => {
+      ws.onerror = (e) => {
         statusEl.textContent = 'Error';
         statusEl.className = 'error';
+        console.error('[WS] Error:', e);
       };
 
       ws.onmessage = (e) => {
-        try { appendFrame(JSON.parse(e.data)); } catch (err) { console.error(err); }
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.geo && msg.geo.length > 0) {
+            addSamples(msg.geo);
+          }
+        } catch (err) {
+          console.error('[WS] Parse error:', err);
+        }
       };
     }
+
+    // =========================================================================
+    // UI EVENT HANDLERS
+    // =========================================================================
+
+    document.getElementById('btn-pause').onclick = function() {
+      paused = !paused;
+      this.textContent = paused ? 'Resume' : 'Pause';
+      this.classList.toggle('active', paused);
+      if (!paused) {
+        requestAnimationFrame(draw);
+      }
+    };
+
+    document.getElementById('btn-clear').onclick = () => {
+      clearBuffer();
+    };
+
+    document.getElementById('time-down').onclick = () => {
+      timeIdx = Math.max(0, timeIdx - 1);
+      document.getElementById('time-val').textContent = TIME_DIVS[timeIdx] + 'ms';
+    };
+
+    document.getElementById('time-up').onclick = () => {
+      timeIdx = Math.min(TIME_DIVS.length - 1, timeIdx + 1);
+      document.getElementById('time-val').textContent = TIME_DIVS[timeIdx] + 'ms';
+    };
+
+    document.getElementById('volt-down').onclick = () => {
+      voltIdx = Math.max(0, voltIdx - 1);
+      document.getElementById('volt-val').textContent = voltIdx === 0 ? 'Auto' : (VOLT_DIVS[voltIdx] / 1000000).toFixed(1) + 'M';
+    };
+
+    document.getElementById('volt-up').onclick = () => {
+      voltIdx = Math.min(VOLT_DIVS.length - 1, voltIdx + 1);
+      document.getElementById('volt-val').textContent = voltIdx === 0 ? 'Auto' : (VOLT_DIVS[voltIdx] / 1000000).toFixed(1) + 'M';
+    };
+
+    document.getElementById('pga-down').onclick = () => {
+      pgaIdx = Math.max(0, pgaIdx - 1);
+      document.getElementById('pga-val').textContent = PGA[pgaIdx] + 'x';
+      // TODO: Send PGA change to device
+    };
+
+    document.getElementById('pga-up').onclick = () => {
+      pgaIdx = Math.min(PGA.length - 1, pgaIdx + 1);
+      document.getElementById('pga-val').textContent = PGA[pgaIdx] + 'x';
+      // TODO: Send PGA change to device
+    };
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      resizeCanvas();
+    });
 
     // =========================================================================
     // INIT
     // =========================================================================
 
-    document.addEventListener('DOMContentLoaded', () => {
-      initPlot();
-      initUI();
-      connectWS();
-    });
+    resizeCanvas();
+    connectWS();
+    requestAnimationFrame(draw);
+
+    console.log('[Geode] Oscilloscope initialized (Canvas mode - no external dependencies)');
   </script>
 </body>
 </html>
