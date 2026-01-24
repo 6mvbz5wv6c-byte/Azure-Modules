@@ -5,13 +5,17 @@
 
 #include "walter_feels.h"
 #include "driver/gpio.h"
-#include "driver/ledc.h"
 
 // Static member initialization
 SerialMode_t WalterFeels::_currentSerialMode = SERIAL_MODE_OFF;
 bool WalterFeels::_gpioAState = false;
 bool WalterFeels::_gpioBState = false;
 bool WalterFeels::_initialized = false;
+
+// LEDC configuration for 3.3V soft-start
+static const uint8_t LEDC_CHANNEL = 0;
+static const uint32_t LEDC_FREQ = 1000;
+static const uint8_t LEDC_RESOLUTION = 5;  // 5-bit = 0-31
 
 // Secondary I2C bus for CO2 sensor
 TwoWire Wire1 = TwoWire(1);
@@ -101,34 +105,16 @@ void WalterFeels::_initPins() {
 }
 
 void WalterFeels::_initLedc() {
-    // Configure LEDC for PWM soft-start on 3.3V rail
-    ledc_timer_config_t timerConfig = {
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = LEDC_TIMER_5_BIT,  // 0-31
-        .timer_num = LEDC_TIMER_0,
-        .freq_hz = 1000,
-        .clk_cfg = LEDC_AUTO_CLK
-    };
-    ledc_timer_config(&timerConfig);
-
-    ledc_channel_config_t channelConfig = {
-        .gpio_num = WFEELS_PIN_3V3_EN,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = LEDC_CHANNEL_0,
-        .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = LEDC_TIMER_0,
-        .duty = 0,
-        .hpoint = 0,
-        .flags = { .output_invert = 0 }
-    };
-    ledc_channel_config(&channelConfig);
+    // Configure LEDC for PWM soft-start on 3.3V rail using Arduino API
+    ledcSetup(LEDC_CHANNEL, LEDC_FREQ, LEDC_RESOLUTION);
+    ledcAttachPin(WFEELS_PIN_3V3_EN, LEDC_CHANNEL);
+    ledcWrite(LEDC_CHANNEL, 0);  // Start with output disabled
 }
 
 void WalterFeels::_softStart3v3() {
     // Soft-start ramp from 0 to full duty over 100ms
     for (int duty = 0; duty <= 31; duty++) {
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+        ledcWrite(LEDC_CHANNEL, duty);
         delay(3);
     }
 }
@@ -156,8 +142,7 @@ void WalterFeels::set3v3(bool enable) {
     if (enable) {
         _softStart3v3();
     } else {
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+        ledcWrite(LEDC_CHANNEL, 0);
     }
 }
 
