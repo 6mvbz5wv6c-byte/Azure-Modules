@@ -34,11 +34,11 @@ bool WalterFeels::init() {
     Wire.begin(WFEELS_PIN_I2C_SDA, WFEELS_PIN_I2C_SCL, WFEELS_I2C_FREQ);
     Wire1.begin(WFEELS_PIN_CO2_SDA, WFEELS_PIN_CO2_SCL, WFEELS_I2C_FREQ);
 
-    // Power up sequence
-    setI2cBusPower(true);
-    delay(10);
+    // Power up sequence: 3.3V rail first, then I2C bus power
     set3v3(true);
-    delay(100);  // Allow power to stabilize
+    delay(250);  // Allow 3.3V rail to stabilize
+    setI2cBusPower(true);
+    delay(100);  // Allow I2C bus to stabilize
 
     _initialized = true;
     Serial.println("[WalterFeels] Initialization complete");
@@ -112,11 +112,18 @@ void WalterFeels::_initLedc() {
 }
 
 void WalterFeels::_softStart3v3() {
-    // Soft-start ramp from 0 to full duty over 100ms
+    // Soft-start ramp from 0 to max duty over ~100ms
     for (int duty = 0; duty <= 31; duty++) {
         ledcWrite(LEDC_CHANNEL, duty);
         delay(3);
     }
+
+    // LEDC max duty (31/32) is only 96.8%, not a solid HIGH.
+    // Detach from LEDC and switch to plain GPIO so the enable pin
+    // is driven fully HIGH for a stable 3.3V rail.
+    ledcDetachPin(WFEELS_PIN_3V3_EN);
+    pinMode(WFEELS_PIN_3V3_EN, OUTPUT);
+    digitalWrite(WFEELS_PIN_3V3_EN, HIGH);
 }
 
 void WalterFeels::prepareDeepSleep() {
@@ -142,7 +149,10 @@ void WalterFeels::set3v3(bool enable) {
     if (enable) {
         _softStart3v3();
     } else {
-        ledcWrite(LEDC_CHANNEL, 0);
+        // Ensure pin is plain GPIO (may have been left as LEDC)
+        ledcDetachPin(WFEELS_PIN_3V3_EN);
+        pinMode(WFEELS_PIN_3V3_EN, OUTPUT);
+        digitalWrite(WFEELS_PIN_3V3_EN, LOW);
     }
 }
 
