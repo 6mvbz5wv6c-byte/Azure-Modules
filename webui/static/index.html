@@ -209,8 +209,15 @@
   <div id="container">
     <div id="controls">
       <button id="follow">Jump to Live</button>
-      <span>Buffer: 45s</span>
-      <span id="view"></span>
+      <span>View:</span>
+      <select id="view-window">
+        <option value="5">5s</option>
+        <option value="15">15s</option>
+        <option value="45" selected>45s (Full)</option>
+        <option value="0">All Data</option>
+      </select>
+      <button id="pause-scroll">Pause</button>
+      <span id="view" style="margin-left:auto;"></span>
     </div>
     <div id="scope"></div>
 
@@ -348,6 +355,194 @@
               <span class="value" id="harmonics-status">OFF</span>
             </div>
             <div class="info-text" id="notch-info">Notch: -40dB @ 60Hz</div>
+          </div>
+
+          <!-- Filter Type Selection -->
+          <div class="filter-section">
+            <h4>Bandpass Type</h4>
+            <div class="param-row">
+              <label>Filter Type:</label>
+              <select id="bp-type">
+                <option value="butterworth" selected>Butterworth (Flat)</option>
+                <option value="chebyshev">Chebyshev (Steep)</option>
+                <option value="elliptic">Elliptic (Sharpest)</option>
+                <option value="bessel">Bessel (Linear Phase)</option>
+              </select>
+            </div>
+            <div class="info-text">
+              Butterworth: Flat passband, smooth rolloff<br>
+              Chebyshev: Steeper rolloff, ripple in passband<br>
+              Elliptic: Sharpest cutoff, ripple both bands<br>
+              Bessel: Preserves waveform shape
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================= -->
+        <!-- ADVANCED DSP PIPELINE -->
+        <!-- ============================================= -->
+        <div style="margin-top:16px; padding-top:12px; border-top:1px solid #444;">
+          <h3 style="color:#f80; margin:0 0 12px 0; font-size:14px;">
+            Advanced DSP Pipeline
+            <span id="snr-display" style="float:right; font-family:monospace; color:#0ff;">SNR: --.- dB</span>
+          </h3>
+          <div class="info-text" style="margin-bottom:12px;">
+            Cascading signal processing for extracting weak 22Hz signals from noise.
+            Processing order: Median → Notch → Comb → LMS → Bandpass → Spectral → Detection → Averaging
+          </div>
+        </div>
+
+        <div class="advanced-grid">
+          <!-- Stage 1: Median Filter -->
+          <div class="filter-section">
+            <h4>Stage 1: Median Filter</h4>
+            <div class="param-row">
+              <label>Enabled:</label>
+              <input type="checkbox" id="median-enabled">
+              <span class="value" id="median-status">OFF</span>
+            </div>
+            <div class="param-row">
+              <label>Window Size:</label>
+              <input type="range" id="median-window" min="3" max="15" value="5" step="2">
+              <span class="value" id="median-window-val">5</span>
+            </div>
+            <div class="info-text">Removes impulse/spike noise. Preserves edges.</div>
+          </div>
+
+          <!-- Stage 2: Comb Filter -->
+          <div class="filter-section">
+            <h4>Stage 2: Comb Filter</h4>
+            <div class="param-row">
+              <label>Enabled:</label>
+              <input type="checkbox" id="comb-enabled">
+              <span class="value" id="comb-status">OFF</span>
+            </div>
+            <div class="param-row">
+              <label>Frequency:</label>
+              <input type="range" id="comb-freq" min="50" max="120" value="60" step="1">
+              <span class="value" id="comb-freq-val">60 Hz</span>
+            </div>
+            <div class="param-row">
+              <label>Rejection:</label>
+              <input type="range" id="comb-gain" min="-0.99" max="-0.5" value="-0.95" step="0.01">
+              <span class="value" id="comb-gain-val">-26 dB</span>
+            </div>
+            <div class="info-text">Rejects periodic interference at f, 2f, 3f...</div>
+          </div>
+
+          <!-- Stage 3: LMS Adaptive -->
+          <div class="filter-section">
+            <h4>Stage 3: Adaptive LMS</h4>
+            <div class="param-row">
+              <label>Enabled:</label>
+              <input type="checkbox" id="lms-enabled">
+              <span class="value" id="lms-status">OFF</span>
+            </div>
+            <div class="param-row">
+              <label>Filter Length:</label>
+              <input type="range" id="lms-length" min="8" max="128" value="32" step="8">
+              <span class="value" id="lms-length-val">32</span>
+            </div>
+            <div class="param-row">
+              <label>Learning Rate:</label>
+              <input type="range" id="lms-mu" min="0.001" max="0.1" value="0.01" step="0.001">
+              <span class="value" id="lms-mu-val">0.01</span>
+            </div>
+            <div class="info-text">Adaptive noise prediction and cancellation.</div>
+          </div>
+
+          <!-- Stage 4: Spectral Subtraction -->
+          <div class="filter-section">
+            <h4>Stage 4: Spectral Subtraction</h4>
+            <div class="param-row">
+              <label>Enabled:</label>
+              <input type="checkbox" id="spectral-enabled">
+              <span class="value" id="spectral-status">OFF</span>
+            </div>
+            <div class="param-row">
+              <label>Over-subtraction:</label>
+              <input type="range" id="spectral-oversub" min="1" max="4" value="2" step="0.5">
+              <span class="value" id="spectral-oversub-val">2.0x</span>
+            </div>
+            <div class="param-row">
+              <label>Noise Floor:</label>
+              <input type="range" id="spectral-floor" min="0.001" max="0.1" value="0.01" step="0.001">
+              <span class="value" id="spectral-floor-val">1.0%</span>
+            </div>
+            <div class="info-text">FFT-based noise spectrum subtraction.</div>
+          </div>
+
+          <!-- Stage 5: Goertzel Tracking -->
+          <div class="filter-section">
+            <h4>Stage 5: Goertzel Tracking</h4>
+            <div class="param-row">
+              <label>Enabled:</label>
+              <input type="checkbox" id="goertzel-enabled">
+              <span class="value" id="goertzel-status">OFF</span>
+            </div>
+            <div class="param-row">
+              <label>Block Size:</label>
+              <input type="range" id="goertzel-block" min="50" max="500" value="100" step="10">
+              <span class="value" id="goertzel-block-val">100</span>
+            </div>
+            <div class="param-row">
+              <label>Tracked Freq:</label>
+              <span class="value" id="goertzel-tracked" style="color:#0f0;flex:1;text-align:center;">22.00 Hz</span>
+            </div>
+            <div class="info-text">Efficient single-frequency DFT with tracking.</div>
+          </div>
+
+          <!-- Stage 6: Matched Filter -->
+          <div class="filter-section">
+            <h4>Stage 6: Matched Filter</h4>
+            <div class="param-row">
+              <label>Enabled:</label>
+              <input type="checkbox" id="matched-enabled">
+              <span class="value" id="matched-status">OFF</span>
+            </div>
+            <div class="param-row">
+              <label>Template Periods:</label>
+              <input type="range" id="matched-periods" min="1" max="10" value="2" step="1">
+              <span class="value" id="matched-periods-val">2</span>
+            </div>
+            <div class="info-text">Optimal detector for 22Hz sinusoid in noise.</div>
+          </div>
+
+          <!-- Stage 7: Coherent Averaging -->
+          <div class="filter-section">
+            <h4>Stage 7: Coherent Averaging</h4>
+            <div class="param-row">
+              <label>Enabled:</label>
+              <input type="checkbox" id="coherent-enabled">
+              <span class="value" id="coherent-status">OFF</span>
+            </div>
+            <div class="param-row">
+              <label>Num Averages:</label>
+              <input type="range" id="coherent-avg" min="5" max="100" value="10" step="5">
+              <span class="value" id="coherent-avg-val">10</span>
+            </div>
+            <div class="param-row">
+              <label>SNR Boost:</label>
+              <span class="value" id="coherent-snr" style="color:#0f0;flex:1;text-align:center;">+10 dB</span>
+            </div>
+            <div class="info-text">Synchronous averaging. SNR improves by √N.</div>
+          </div>
+
+          <!-- Quick Presets -->
+          <div class="filter-section" style="background:#2a2a1a;">
+            <h4 style="color:#ff0;">Quick Presets</h4>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              <button id="preset-light" style="flex:1;min-width:80px;">Light</button>
+              <button id="preset-medium" style="flex:1;min-width:80px;">Medium</button>
+              <button id="preset-heavy" style="flex:1;min-width:80px;">Heavy</button>
+              <button id="preset-max" style="flex:1;min-width:80px;">Maximum</button>
+            </div>
+            <div class="info-text" style="margin-top:8px;">
+              Light: Median + Notch<br>
+              Medium: + LMS + Bandpass<br>
+              Heavy: + Spectral + Matched<br>
+              Maximum: Full pipeline + Goertzel
+            </div>
           </div>
         </div>
       </div>
@@ -533,6 +728,599 @@
     }
 
     // =========================================================================
+    // ADVANCED FILTER DESIGNS - Chebyshev, Elliptic, Bessel
+    // =========================================================================
+
+    /**
+     * Chebyshev Type I Lowpass - Steeper rolloff with passband ripple
+     * rippleDb: Allowed ripple in passband (0.5-3 dB typical)
+     */
+    function designChebyshevLP2(fc, rippleDb, fs) {
+      const w0 = 2 * Math.PI * fc / fs;
+
+      // Prewarp frequency
+      const wc = Math.tan(w0 / 2);
+
+      // Chebyshev parameters
+      const epsilon = Math.sqrt(Math.pow(10, rippleDb / 10) - 1);
+      const a = 1 / epsilon + Math.sqrt(1 + 1 / (epsilon * epsilon));
+      const sinhA = (Math.pow(a, 1/2) - Math.pow(a, -1/2)) / 2;
+      const coshA = (Math.pow(a, 1/2) + Math.pow(a, -1/2)) / 2;
+
+      // Pole locations for 2nd order
+      const theta = Math.PI / 2;
+      const sigma = -sinhA * Math.sin(theta);
+      const omega = coshA * Math.cos(theta);
+
+      // Bilinear transform
+      const p_real = sigma * wc;
+      const p_imag = omega * wc;
+
+      const denom = (1 - p_real) * (1 - p_real) + p_imag * p_imag;
+      const a1 = 2 * ((p_real * p_real + p_imag * p_imag) - 1) / denom;
+      const a2 = ((1 + p_real) * (1 + p_real) + p_imag * p_imag) / denom;
+
+      // Normalize for DC gain
+      const k = (1 + a1 + a2) / 4;
+      const b0 = k;
+      const b1 = 2 * k;
+      const b2 = k;
+
+      return new Biquad(b0, b1, b2, a1, a2);
+    }
+
+    /**
+     * Chebyshev Type I Highpass
+     */
+    function designChebyshevHP2(fc, rippleDb, fs) {
+      const w0 = 2 * Math.PI * fc / fs;
+      const wc = Math.tan(w0 / 2);
+
+      const epsilon = Math.sqrt(Math.pow(10, rippleDb / 10) - 1);
+      const a = 1 / epsilon + Math.sqrt(1 + 1 / (epsilon * epsilon));
+      const sinhA = (Math.pow(a, 1/2) - Math.pow(a, -1/2)) / 2;
+      const coshA = (Math.pow(a, 1/2) + Math.pow(a, -1/2)) / 2;
+
+      const theta = Math.PI / 2;
+      const sigma = -sinhA * Math.sin(theta);
+      const omega = coshA * Math.cos(theta);
+
+      // HP transform: s -> wc/s
+      const p_real = sigma / wc;
+      const p_imag = omega / wc;
+
+      const denom = (1 - p_real) * (1 - p_real) + p_imag * p_imag;
+      const a1 = 2 * ((p_real * p_real + p_imag * p_imag) - 1) / denom;
+      const a2 = ((1 + p_real) * (1 + p_real) + p_imag * p_imag) / denom;
+
+      // HP coefficients
+      const k = (1 - a1 + a2) / 4;
+      const b0 = k;
+      const b1 = -2 * k;
+      const b2 = k;
+
+      return new Biquad(b0, b1, b2, a1, a2);
+    }
+
+    /**
+     * Chebyshev Bandpass - Cascade of HP and LP sections
+     */
+    function designChebyshevBandpass(fc, bw, fs, order, rippleDb = 1) {
+      const sections = [];
+      const fLow = fc - bw / 2;
+      const fHigh = fc + bw / 2;
+      const n = order / 2;
+
+      for (let k = 0; k < n; k++) {
+        sections.push(designChebyshevHP2(fLow, rippleDb, fs));
+        sections.push(designChebyshevLP2(fHigh, rippleDb, fs));
+      }
+
+      return new FilterChain(sections);
+    }
+
+    /**
+     * Elliptic (Cauer) filter - Sharpest possible transition
+     * Uses both poles and zeros for maximum selectivity
+     * Simplified 2nd order approximation
+     */
+    function designEllipticLP2(fc, rippleDb, stopbandDb, fs) {
+      const w0 = 2 * Math.PI * fc / fs;
+      const wc = Math.tan(w0 / 2);
+
+      // Selectivity factor
+      const epsilon = Math.sqrt(Math.pow(10, rippleDb / 10) - 1);
+      const A = Math.pow(10, stopbandDb / 20);
+
+      // Simplified elliptic approximation
+      const k1 = epsilon / Math.sqrt(A * A - 1);
+      const k = Math.min(0.99, Math.sqrt(1 - k1 * k1));
+
+      // Pole and zero calculation (simplified)
+      const q = 0.5 * (1 - Math.sqrt(k)) / (1 + Math.sqrt(k));
+      const q25 = 2 * Math.pow(q, 0.25);
+
+      // Pole location
+      const sigma = -wc * q25;
+      const omega = wc * Math.sqrt(1 - q25 * q25);
+
+      // Zero location (on imaginary axis, beyond passband)
+      const wz = wc / k1;
+
+      // Bilinear coefficients
+      const a0 = 1 + sigma * sigma + omega * omega - 2 * sigma;
+      const a1 = 2 * (sigma * sigma + omega * omega - 1);
+      const a2 = 1 + sigma * sigma + omega * omega + 2 * sigma;
+
+      const b0 = (1 + wz * wz);
+      const b1 = 2 * (wz * wz - 1);
+      const b2 = (1 + wz * wz);
+
+      // Normalize
+      const norm = b0 / a0;
+
+      return new Biquad(norm, b1 * norm / b0, b2 * norm / b0, a1 / a0, a2 / a0);
+    }
+
+    /**
+     * Elliptic Bandpass - Sharp edges around target frequency
+     */
+    function designEllipticBandpass(fc, bw, fs, order, rippleDb = 0.5, stopbandDb = 40) {
+      const sections = [];
+      const fLow = Math.max(1, fc - bw / 2);
+      const fHigh = Math.min(fs / 2 - 1, fc + bw / 2);
+      const n = Math.max(1, Math.floor(order / 2));
+
+      for (let k = 0; k < n; k++) {
+        // Use Butterworth HP for low edge (more stable)
+        sections.push(designHP2(fLow, 0.707, fs));
+        // Use elliptic for high edge (sharp cutoff)
+        sections.push(designEllipticLP2(fHigh, rippleDb, stopbandDb, fs));
+      }
+
+      return new FilterChain(sections);
+    }
+
+    /**
+     * Bessel filter - Maximally flat group delay (linear phase)
+     * Preserves waveform shape, but gentler rolloff
+     */
+    function designBesselLP2(fc, fs) {
+      const w0 = 2 * Math.PI * fc / fs;
+      const wc = Math.tan(w0 / 2);
+
+      // Bessel polynomial coefficients for n=2: s^2 + 3s + 3
+      // Normalized poles at approximately -1.5 ± j0.866
+      const sigma = -1.5 * wc;
+      const omega = 0.866 * wc;
+
+      // Bilinear transform
+      const a0 = 1 - 2 * sigma + sigma * sigma + omega * omega;
+      const a1 = 2 * (sigma * sigma + omega * omega - 1);
+      const a2 = 1 + 2 * sigma + sigma * sigma + omega * omega;
+
+      const b0 = wc * wc;
+      const b1 = 2 * wc * wc;
+      const b2 = wc * wc;
+
+      // Normalize for unity DC gain
+      const norm = (1 + a1/a0 + a2/a0);
+      const g = 1 / norm;
+
+      return new Biquad(g * b0/a0, g * b1/a0, g * b2/a0, a1/a0, a2/a0);
+    }
+
+    /**
+     * Bessel Bandpass - Preserves signal shape
+     */
+    function designBesselBandpass(fc, bw, fs, order) {
+      const sections = [];
+      const fLow = fc - bw / 2;
+      const fHigh = fc + bw / 2;
+      const n = order / 2;
+
+      for (let k = 0; k < n; k++) {
+        sections.push(designHP2(fLow, 0.577, fs)); // Bessel-like Q
+        sections.push(designBesselLP2(fHigh, fs));
+      }
+
+      return new FilterChain(sections);
+    }
+
+    // =========================================================================
+    // ADAPTIVE FILTERS - LMS Noise Cancellation
+    // =========================================================================
+
+    /**
+     * LMS (Least Mean Squares) Adaptive Filter
+     * Learns to predict and cancel correlated noise
+     *
+     * Theory: Minimizes E[e²] where e = d - y
+     * w[n+1] = w[n] + 2*mu*e[n]*x[n]
+     *
+     * Use cases:
+     * - Reference noise cancellation (if you have a noise reference)
+     * - Self-adaptive prediction (predict current from delayed versions)
+     */
+    class LMSFilter {
+      constructor(filterLength, mu = 0.01, leakage = 0.999) {
+        this.length = filterLength;
+        this.mu = mu;                    // Learning rate (0.001 - 0.1)
+        this.leakage = leakage;          // Leaky LMS for stability
+        this.weights = new Float64Array(filterLength);
+        this.buffer = new Float64Array(filterLength);
+        this.bufferIdx = 0;
+      }
+
+      reset() {
+        this.weights.fill(0);
+        this.buffer.fill(0);
+        this.bufferIdx = 0;
+      }
+
+      /**
+       * Adaptive noise cancellation mode
+       * noiseRef: Correlated noise reference signal
+       * primary: Signal + noise (what we want to clean)
+       * Returns: Cleaned signal estimate
+       */
+      processNoiseCancellation(primary, noiseRef) {
+        // Update delay line with noise reference
+        this.buffer[this.bufferIdx] = noiseRef;
+
+        // Compute filter output (estimated noise)
+        let y = 0;
+        for (let i = 0; i < this.length; i++) {
+          const idx = (this.bufferIdx - i + this.length) % this.length;
+          y += this.weights[i] * this.buffer[idx];
+        }
+
+        // Error signal (this is our cleaned signal!)
+        const error = primary - y;
+
+        // LMS weight update with leakage for stability
+        const normFactor = this.mu / (this.dotProduct() + 1e-8);
+        for (let i = 0; i < this.length; i++) {
+          const idx = (this.bufferIdx - i + this.length) % this.length;
+          this.weights[i] = this.leakage * this.weights[i] + normFactor * error * this.buffer[idx];
+        }
+
+        this.bufferIdx = (this.bufferIdx + 1) % this.length;
+        return error;
+      }
+
+      /**
+       * Predictive denoising - predict signal from its past
+       * Removes unpredictable (noise) component
+       */
+      processPredictive(sample, delay = 1) {
+        // Predict current sample from delayed version
+        const delayIdx = (this.bufferIdx - delay + this.length) % this.length;
+        this.buffer[this.bufferIdx] = sample;
+
+        // Compute prediction
+        let predicted = 0;
+        for (let i = 0; i < this.length; i++) {
+          const idx = (delayIdx - i + this.length) % this.length;
+          predicted += this.weights[i] * this.buffer[idx];
+        }
+
+        // Error is the unpredictable part (noise + transients)
+        const error = sample - predicted;
+
+        // Update weights toward predicting signal (keeping predictable part)
+        const normFactor = this.mu / (this.dotProduct() + 1e-8);
+        for (let i = 0; i < this.length; i++) {
+          const idx = (delayIdx - i + this.length) % this.length;
+          this.weights[i] = this.leakage * this.weights[i] + normFactor * error * this.buffer[idx];
+        }
+
+        this.bufferIdx = (this.bufferIdx + 1) % this.length;
+
+        // Return predicted (clean) signal
+        return predicted;
+      }
+
+      dotProduct() {
+        let sum = 0;
+        for (let i = 0; i < this.length; i++) {
+          sum += this.buffer[i] * this.buffer[i];
+        }
+        return sum;
+      }
+
+      processArray(input, mode = 'predictive', delay = 1, noiseRef = null) {
+        const out = new Float64Array(input.length);
+
+        if (mode === 'noise_cancel' && noiseRef) {
+          for (let i = 0; i < input.length; i++) {
+            out[i] = this.processNoiseCancellation(input[i], noiseRef[i]);
+          }
+        } else {
+          for (let i = 0; i < input.length; i++) {
+            out[i] = this.processPredictive(input[i], delay);
+          }
+        }
+
+        return out;
+      }
+    }
+
+    /**
+     * NLMS (Normalized LMS) - More stable than standard LMS
+     * Normalizes step size by input power
+     */
+    class NLMSFilter extends LMSFilter {
+      constructor(filterLength, mu = 0.5, delta = 1e-4) {
+        super(filterLength, mu, 1.0);  // No leakage in NLMS
+        this.delta = delta;  // Regularization
+      }
+
+      processPredictive(sample, delay = 1) {
+        const delayIdx = (this.bufferIdx - delay + this.length) % this.length;
+        this.buffer[this.bufferIdx] = sample;
+
+        let predicted = 0;
+        for (let i = 0; i < this.length; i++) {
+          const idx = (delayIdx - i + this.length) % this.length;
+          predicted += this.weights[i] * this.buffer[idx];
+        }
+
+        const error = sample - predicted;
+
+        // Normalized step size
+        const power = this.dotProduct() + this.delta;
+        const normMu = this.mu / power;
+
+        for (let i = 0; i < this.length; i++) {
+          const idx = (delayIdx - i + this.length) % this.length;
+          this.weights[i] += normMu * error * this.buffer[idx];
+        }
+
+        this.bufferIdx = (this.bufferIdx + 1) % this.length;
+        return predicted;
+      }
+    }
+
+    // =========================================================================
+    // COMB FILTER - Periodic Noise Rejection
+    // =========================================================================
+
+    /**
+     * Comb Filter - Rejects periodic interference
+     * Creates notches at f, 2f, 3f, etc. OR peaks at those frequencies
+     *
+     * Feedforward comb: y[n] = x[n] + a*x[n-D]  (notches)
+     * Feedback comb: y[n] = x[n] + a*y[n-D]     (peaks/resonance)
+     */
+    class CombFilter {
+      constructor(delayMs, sampleRate, feedbackGain = -0.95, type = 'feedforward') {
+        this.delaySamples = Math.round(delayMs * sampleRate / 1000);
+        this.gain = feedbackGain;
+        this.type = type;
+        this.buffer = new Float64Array(this.delaySamples);
+        this.bufferIdx = 0;
+      }
+
+      reset() {
+        this.buffer.fill(0);
+        this.bufferIdx = 0;
+      }
+
+      process(x) {
+        const delayed = this.buffer[this.bufferIdx];
+        let y;
+
+        if (this.type === 'feedback') {
+          // Feedback comb - resonates at multiples of 1/delay
+          y = x + this.gain * delayed;
+          this.buffer[this.bufferIdx] = y;
+        } else {
+          // Feedforward comb - notches at multiples of 1/delay
+          y = x + this.gain * delayed;
+          this.buffer[this.bufferIdx] = x;
+        }
+
+        this.bufferIdx = (this.bufferIdx + 1) % this.delaySamples;
+        return y;
+      }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.process(input[i]);
+        }
+        return out;
+      }
+
+      /**
+       * Create comb filter tuned to reject a specific frequency and harmonics
+       */
+      static createForFrequency(freq, sampleRate, gain = -0.95) {
+        const periodMs = 1000 / freq;
+        return new CombFilter(periodMs, sampleRate, gain, 'feedforward');
+      }
+    }
+
+    // =========================================================================
+    // MEDIAN FILTER - Impulse Noise Rejection
+    // =========================================================================
+
+    /**
+     * Median Filter - Excellent for removing impulse/spike noise
+     * Preserves edges better than moving average
+     */
+    class MedianFilter {
+      constructor(windowSize = 5) {
+        this.windowSize = windowSize | 1; // Ensure odd
+        this.halfWindow = Math.floor(this.windowSize / 2);
+        this.buffer = new Float64Array(this.windowSize);
+        this.sortBuffer = new Float64Array(this.windowSize);
+        this.bufferIdx = 0;
+        this.filled = 0;
+      }
+
+      reset() {
+        this.buffer.fill(0);
+        this.bufferIdx = 0;
+        this.filled = 0;
+      }
+
+      process(x) {
+        this.buffer[this.bufferIdx] = x;
+        this.bufferIdx = (this.bufferIdx + 1) % this.windowSize;
+        this.filled = Math.min(this.filled + 1, this.windowSize);
+
+        // Copy and sort
+        for (let i = 0; i < this.filled; i++) {
+          this.sortBuffer[i] = this.buffer[i];
+        }
+        this.sortBuffer.subarray(0, this.filled).sort((a, b) => a - b);
+
+        // Return median
+        return this.sortBuffer[Math.floor(this.filled / 2)];
+      }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.process(input[i]);
+        }
+        return out;
+      }
+    }
+
+    /**
+     * Weighted Median Filter - Gives more weight to center samples
+     */
+    class WeightedMedianFilter {
+      constructor(windowSize = 5) {
+        this.windowSize = windowSize | 1;
+        this.halfWindow = Math.floor(this.windowSize / 2);
+        this.buffer = [];
+
+        // Triangular weights (center-weighted)
+        this.weights = [];
+        for (let i = 0; i < this.windowSize; i++) {
+          const dist = Math.abs(i - this.halfWindow);
+          this.weights.push(this.halfWindow - dist + 1);
+        }
+      }
+
+      reset() {
+        this.buffer = [];
+      }
+
+      process(x) {
+        this.buffer.push(x);
+        if (this.buffer.length > this.windowSize) {
+          this.buffer.shift();
+        }
+
+        // Create weighted sample list
+        const weighted = [];
+        for (let i = 0; i < this.buffer.length; i++) {
+          for (let j = 0; j < this.weights[i]; j++) {
+            weighted.push(this.buffer[i]);
+          }
+        }
+
+        weighted.sort((a, b) => a - b);
+        return weighted[Math.floor(weighted.length / 2)];
+      }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.process(input[i]);
+        }
+        return out;
+      }
+    }
+
+    // =========================================================================
+    // MOVING AVERAGE FILTERS - Smoothing
+    // =========================================================================
+
+    /**
+     * Exponential Moving Average (EMA) - Simple recursive smoothing
+     */
+    class EMAFilter {
+      constructor(alpha = 0.1) {
+        this.alpha = alpha;  // 0 < alpha <= 1, smaller = more smoothing
+        this.state = 0;
+        this.initialized = false;
+      }
+
+      reset() {
+        this.state = 0;
+        this.initialized = false;
+      }
+
+      process(x) {
+        if (!this.initialized) {
+          this.state = x;
+          this.initialized = true;
+          return x;
+        }
+        this.state = this.alpha * x + (1 - this.alpha) * this.state;
+        return this.state;
+      }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.process(input[i]);
+        }
+        return out;
+      }
+
+      // Set alpha based on desired time constant (in samples)
+      static fromTimeConstant(tc) {
+        return new EMAFilter(1 - Math.exp(-1 / tc));
+      }
+    }
+
+    /**
+     * Simple Moving Average (SMA) - Boxcar averaging
+     */
+    class SMAFilter {
+      constructor(windowSize = 10) {
+        this.windowSize = windowSize;
+        this.buffer = new Float64Array(windowSize);
+        this.bufferIdx = 0;
+        this.sum = 0;
+        this.filled = 0;
+      }
+
+      reset() {
+        this.buffer.fill(0);
+        this.bufferIdx = 0;
+        this.sum = 0;
+        this.filled = 0;
+      }
+
+      process(x) {
+        // Subtract old, add new
+        this.sum -= this.buffer[this.bufferIdx];
+        this.buffer[this.bufferIdx] = x;
+        this.sum += x;
+        this.bufferIdx = (this.bufferIdx + 1) % this.windowSize;
+        this.filled = Math.min(this.filled + 1, this.windowSize);
+
+        return this.sum / this.filled;
+      }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.process(input[i]);
+        }
+        return out;
+      }
+    }
+
+    // =========================================================================
     // LOCK-IN AMPLIFIER - Phase-Sensitive Detection
     // =========================================================================
 
@@ -630,18 +1418,1200 @@
     }
 
     // =========================================================================
-    // FILTER STATE
+    // FFT - Fast Fourier Transform (Cooley-Tukey)
+    // =========================================================================
+
+    /**
+     * In-place FFT using Cooley-Tukey radix-2 algorithm
+     * Input must be power of 2 length
+     */
+    class FFT {
+      constructor(size) {
+        this.size = size;
+        this.log2n = Math.log2(size);
+        if (Math.pow(2, this.log2n) !== size) {
+          throw new Error('FFT size must be power of 2');
+        }
+
+        // Precompute twiddle factors
+        this.cosTable = new Float64Array(size / 2);
+        this.sinTable = new Float64Array(size / 2);
+        for (let i = 0; i < size / 2; i++) {
+          const angle = -2 * Math.PI * i / size;
+          this.cosTable[i] = Math.cos(angle);
+          this.sinTable[i] = Math.sin(angle);
+        }
+
+        // Bit reversal table
+        this.bitReversal = new Uint32Array(size);
+        for (let i = 0; i < size; i++) {
+          this.bitReversal[i] = this.reverseBits(i);
+        }
+      }
+
+      reverseBits(x) {
+        let result = 0;
+        for (let i = 0; i < this.log2n; i++) {
+          result = (result << 1) | (x & 1);
+          x >>= 1;
+        }
+        return result;
+      }
+
+      /**
+       * Forward FFT - time domain to frequency domain
+       * real/imag arrays are modified in-place
+       */
+      forward(real, imag) {
+        const n = this.size;
+
+        // Bit reversal permutation
+        for (let i = 0; i < n; i++) {
+          const j = this.bitReversal[i];
+          if (j > i) {
+            let temp = real[i]; real[i] = real[j]; real[j] = temp;
+            temp = imag[i]; imag[i] = imag[j]; imag[j] = temp;
+          }
+        }
+
+        // Cooley-Tukey butterfly
+        for (let size = 2; size <= n; size *= 2) {
+          const halfSize = size / 2;
+          const step = n / size;
+
+          for (let i = 0; i < n; i += size) {
+            for (let j = 0; j < halfSize; j++) {
+              const k = j * step;
+              const cos = this.cosTable[k];
+              const sin = this.sinTable[k];
+
+              const evenIdx = i + j;
+              const oddIdx = i + j + halfSize;
+
+              const tReal = real[oddIdx] * cos - imag[oddIdx] * sin;
+              const tImag = real[oddIdx] * sin + imag[oddIdx] * cos;
+
+              real[oddIdx] = real[evenIdx] - tReal;
+              imag[oddIdx] = imag[evenIdx] - tImag;
+              real[evenIdx] += tReal;
+              imag[evenIdx] += tImag;
+            }
+          }
+        }
+      }
+
+      /**
+       * Inverse FFT - frequency domain to time domain
+       */
+      inverse(real, imag) {
+        // Conjugate
+        for (let i = 0; i < this.size; i++) {
+          imag[i] = -imag[i];
+        }
+
+        this.forward(real, imag);
+
+        // Conjugate and scale
+        const scale = 1 / this.size;
+        for (let i = 0; i < this.size; i++) {
+          real[i] *= scale;
+          imag[i] = -imag[i] * scale;
+        }
+      }
+
+      /**
+       * Compute magnitude spectrum
+       */
+      magnitude(real, imag) {
+        const mag = new Float64Array(this.size / 2);
+        for (let i = 0; i < this.size / 2; i++) {
+          mag[i] = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
+        }
+        return mag;
+      }
+
+      /**
+       * Compute power spectrum (magnitude squared)
+       */
+      power(real, imag) {
+        const pow = new Float64Array(this.size / 2);
+        for (let i = 0; i < this.size / 2; i++) {
+          pow[i] = real[i] * real[i] + imag[i] * imag[i];
+        }
+        return pow;
+      }
+    }
+
+    // =========================================================================
+    // SPECTRAL ANALYSIS - Welch PSD & Spectral Subtraction
+    // =========================================================================
+
+    /**
+     * Welch's method for Power Spectral Density estimation
+     * Averages multiple overlapping windowed FFTs for better frequency resolution
+     */
+    class WelchPSD {
+      constructor(fftSize = 256, overlap = 0.5, sampleRate = 1000) {
+        this.fftSize = fftSize;
+        this.overlap = overlap;
+        this.hopSize = Math.round(fftSize * (1 - overlap));
+        this.sampleRate = sampleRate;
+        this.fft = new FFT(fftSize);
+
+        // Hann window for spectral leakage reduction
+        this.window = new Float64Array(fftSize);
+        for (let i = 0; i < fftSize; i++) {
+          this.window[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (fftSize - 1)));
+        }
+
+        // Window power normalization
+        this.windowPower = 0;
+        for (let i = 0; i < fftSize; i++) {
+          this.windowPower += this.window[i] * this.window[i];
+        }
+      }
+
+      /**
+       * Estimate PSD from signal
+       * Returns: { frequencies, psd }
+       */
+      estimate(signal) {
+        const n = signal.length;
+        const numSegments = Math.floor((n - this.fftSize) / this.hopSize) + 1;
+
+        if (numSegments < 1) {
+          // Not enough data - return zeros
+          return {
+            frequencies: this.getFrequencies(),
+            psd: new Float64Array(this.fftSize / 2)
+          };
+        }
+
+        const psdSum = new Float64Array(this.fftSize / 2);
+        const real = new Float64Array(this.fftSize);
+        const imag = new Float64Array(this.fftSize);
+
+        for (let seg = 0; seg < numSegments; seg++) {
+          const start = seg * this.hopSize;
+
+          // Window the segment
+          for (let i = 0; i < this.fftSize; i++) {
+            real[i] = signal[start + i] * this.window[i];
+            imag[i] = 0;
+          }
+
+          // FFT
+          this.fft.forward(real, imag);
+
+          // Accumulate power
+          for (let i = 0; i < this.fftSize / 2; i++) {
+            psdSum[i] += real[i] * real[i] + imag[i] * imag[i];
+          }
+        }
+
+        // Normalize
+        const scale = 2 / (numSegments * this.windowPower * this.sampleRate);
+        for (let i = 0; i < this.fftSize / 2; i++) {
+          psdSum[i] *= scale;
+        }
+
+        return {
+          frequencies: this.getFrequencies(),
+          psd: psdSum
+        };
+      }
+
+      getFrequencies() {
+        const freqs = new Float64Array(this.fftSize / 2);
+        const binWidth = this.sampleRate / this.fftSize;
+        for (let i = 0; i < this.fftSize / 2; i++) {
+          freqs[i] = i * binWidth;
+        }
+        return freqs;
+      }
+
+      /**
+       * Find peak frequency in a range
+       */
+      findPeak(signal, fMin, fMax) {
+        const { frequencies, psd } = this.estimate(signal);
+
+        let maxPower = 0;
+        let peakFreq = 0;
+
+        for (let i = 0; i < frequencies.length; i++) {
+          if (frequencies[i] >= fMin && frequencies[i] <= fMax) {
+            if (psd[i] > maxPower) {
+              maxPower = psd[i];
+              peakFreq = frequencies[i];
+            }
+          }
+        }
+
+        return { frequency: peakFreq, power: maxPower };
+      }
+    }
+
+    /**
+     * Spectral Subtraction - Noise reduction by estimating and removing noise spectrum
+     *
+     * Theory: |S|² ≈ |Y|² - |N|²
+     * where Y = noisy signal, N = estimated noise, S = clean signal
+     */
+    class SpectralSubtraction {
+      constructor(fftSize = 256, sampleRate = 1000, overSubtraction = 2, noiseFloor = 0.01) {
+        this.fftSize = fftSize;
+        this.hopSize = fftSize / 2;
+        this.sampleRate = sampleRate;
+        this.overSubtraction = overSubtraction;  // α: How aggressively to subtract (1-4)
+        this.noiseFloor = noiseFloor;            // β: Minimum spectral floor
+
+        this.fft = new FFT(fftSize);
+
+        // Hann window
+        this.window = new Float64Array(fftSize);
+        this.windowSum = new Float64Array(fftSize);
+        for (let i = 0; i < fftSize; i++) {
+          this.window[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (fftSize - 1)));
+        }
+
+        // Noise estimate (updated during "silence" or initial frames)
+        this.noiseSpectrum = new Float64Array(fftSize / 2);
+        this.noiseEstimated = false;
+        this.frameCount = 0;
+        this.noiseFrames = 10;  // Frames to use for noise estimation
+      }
+
+      /**
+       * Estimate noise from initial frames (assumes signal starts with noise)
+       */
+      estimateNoise(signal) {
+        const real = new Float64Array(this.fftSize);
+        const imag = new Float64Array(this.fftSize);
+
+        this.noiseSpectrum.fill(0);
+
+        const frames = Math.min(this.noiseFrames, Math.floor(signal.length / this.fftSize));
+
+        for (let f = 0; f < frames; f++) {
+          const start = f * this.fftSize;
+
+          for (let i = 0; i < this.fftSize; i++) {
+            real[i] = signal[start + i] * this.window[i];
+            imag[i] = 0;
+          }
+
+          this.fft.forward(real, imag);
+
+          for (let i = 0; i < this.fftSize / 2; i++) {
+            this.noiseSpectrum[i] += Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
+          }
+        }
+
+        // Average
+        for (let i = 0; i < this.fftSize / 2; i++) {
+          this.noiseSpectrum[i] /= frames;
+        }
+
+        this.noiseEstimated = true;
+      }
+
+      /**
+       * Process signal with spectral subtraction
+       */
+      process(signal) {
+        if (!this.noiseEstimated) {
+          this.estimateNoise(signal);
+        }
+
+        const n = signal.length;
+        const output = new Float64Array(n);
+        const outputWeight = new Float64Array(n);
+
+        const real = new Float64Array(this.fftSize);
+        const imag = new Float64Array(this.fftSize);
+        const mag = new Float64Array(this.fftSize / 2);
+        const phase = new Float64Array(this.fftSize / 2);
+
+        const numFrames = Math.floor((n - this.fftSize) / this.hopSize) + 1;
+
+        for (let f = 0; f < numFrames; f++) {
+          const start = f * this.hopSize;
+
+          // Window input
+          for (let i = 0; i < this.fftSize; i++) {
+            real[i] = signal[start + i] * this.window[i];
+            imag[i] = 0;
+          }
+
+          // Forward FFT
+          this.fft.forward(real, imag);
+
+          // Compute magnitude and phase
+          for (let i = 0; i < this.fftSize / 2; i++) {
+            mag[i] = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
+            phase[i] = Math.atan2(imag[i], real[i]);
+          }
+
+          // Spectral subtraction with flooring
+          for (let i = 0; i < this.fftSize / 2; i++) {
+            let cleanMag = mag[i] * mag[i] - this.overSubtraction * this.noiseSpectrum[i] * this.noiseSpectrum[i];
+            cleanMag = Math.max(cleanMag, this.noiseFloor * mag[i] * mag[i]);
+            cleanMag = Math.sqrt(cleanMag);
+
+            // Reconstruct complex spectrum
+            real[i] = cleanMag * Math.cos(phase[i]);
+            imag[i] = cleanMag * Math.sin(phase[i]);
+
+            // Mirror for negative frequencies
+            if (i > 0 && i < this.fftSize / 2) {
+              real[this.fftSize - i] = real[i];
+              imag[this.fftSize - i] = -imag[i];
+            }
+          }
+
+          // Inverse FFT
+          this.fft.inverse(real, imag);
+
+          // Overlap-add
+          for (let i = 0; i < this.fftSize; i++) {
+            output[start + i] += real[i] * this.window[i];
+            outputWeight[start + i] += this.window[i] * this.window[i];
+          }
+        }
+
+        // Normalize by overlap weights
+        for (let i = 0; i < n; i++) {
+          if (outputWeight[i] > 0.001) {
+            output[i] /= outputWeight[i];
+          }
+        }
+
+        return output;
+      }
+
+      processArray(input) {
+        return Array.from(this.process(input));
+      }
+    }
+
+    // =========================================================================
+    // MATCHED FILTER & CORRELATION DETECTOR - Optimal 22Hz Detection
+    // =========================================================================
+
+    /**
+     * Matched Filter - Optimal detector for known signal in white noise
+     * Maximizes SNR for detecting a sinusoid at target frequency
+     *
+     * h[n] = sin(2πf·n/fs) for optimal detection of frequency f
+     */
+    class MatchedFilter {
+      constructor(targetFreq, sampleRate, periodCount = 2) {
+        this.targetFreq = targetFreq;
+        this.sampleRate = sampleRate;
+        this.periodCount = periodCount;
+
+        // Template length = integer number of periods
+        const samplesPerPeriod = sampleRate / targetFreq;
+        this.length = Math.round(samplesPerPeriod * periodCount);
+
+        // Generate matched filter template (time-reversed for correlation)
+        this.template = new Float64Array(this.length);
+        for (let i = 0; i < this.length; i++) {
+          this.template[i] = Math.sin(2 * Math.PI * targetFreq * (this.length - 1 - i) / sampleRate);
+        }
+
+        // Normalize
+        let norm = 0;
+        for (let i = 0; i < this.length; i++) {
+          norm += this.template[i] * this.template[i];
+        }
+        norm = Math.sqrt(norm);
+        for (let i = 0; i < this.length; i++) {
+          this.template[i] /= norm;
+        }
+
+        this.buffer = new Float64Array(this.length);
+        this.bufferIdx = 0;
+      }
+
+      reset() {
+        this.buffer.fill(0);
+        this.bufferIdx = 0;
+      }
+
+      setFrequency(freq) {
+        this.targetFreq = freq;
+        const samplesPerPeriod = this.sampleRate / freq;
+        this.length = Math.round(samplesPerPeriod * this.periodCount);
+
+        this.template = new Float64Array(this.length);
+        for (let i = 0; i < this.length; i++) {
+          this.template[i] = Math.sin(2 * Math.PI * freq * (this.length - 1 - i) / this.sampleRate);
+        }
+
+        let norm = 0;
+        for (let i = 0; i < this.length; i++) {
+          norm += this.template[i] * this.template[i];
+        }
+        norm = Math.sqrt(norm);
+        for (let i = 0; i < this.length; i++) {
+          this.template[i] /= norm;
+        }
+
+        this.buffer = new Float64Array(this.length);
+        this.bufferIdx = 0;
+      }
+
+      /**
+       * Process sample and return correlation output
+       */
+      process(x) {
+        this.buffer[this.bufferIdx] = x;
+
+        // Convolution (correlation with time-reversed template)
+        let sum = 0;
+        for (let i = 0; i < this.length; i++) {
+          const idx = (this.bufferIdx - i + this.length) % this.length;
+          sum += this.buffer[idx] * this.template[i];
+        }
+
+        this.bufferIdx = (this.bufferIdx + 1) % this.length;
+        return sum;
+      }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.process(input[i]);
+        }
+        return out;
+      }
+    }
+
+    /**
+     * Cross-Correlation Detector - Compare signal with reference sinusoid
+     * Good for detecting presence of specific frequency
+     */
+    class CorrelationDetector {
+      constructor(targetFreq, sampleRate, windowMs = 100) {
+        this.targetFreq = targetFreq;
+        this.sampleRate = sampleRate;
+        this.windowSize = Math.round(windowMs * sampleRate / 1000);
+
+        // Generate reference sinusoids (I and Q)
+        this.refSin = new Float64Array(this.windowSize);
+        this.refCos = new Float64Array(this.windowSize);
+
+        this.updateReference();
+
+        this.buffer = new Float64Array(this.windowSize);
+        this.bufferIdx = 0;
+      }
+
+      updateReference() {
+        for (let i = 0; i < this.windowSize; i++) {
+          const t = i / this.sampleRate;
+          this.refSin[i] = Math.sin(2 * Math.PI * this.targetFreq * t);
+          this.refCos[i] = Math.cos(2 * Math.PI * this.targetFreq * t);
+        }
+      }
+
+      setFrequency(freq) {
+        this.targetFreq = freq;
+        this.updateReference();
+      }
+
+      reset() {
+        this.buffer.fill(0);
+        this.bufferIdx = 0;
+      }
+
+      /**
+       * Process and return magnitude of correlation at target frequency
+       */
+      process(x) {
+        this.buffer[this.bufferIdx] = x;
+
+        // Correlate with both sin and cos
+        let sumI = 0, sumQ = 0;
+        for (let i = 0; i < this.windowSize; i++) {
+          const idx = (this.bufferIdx - i + this.windowSize) % this.windowSize;
+          sumI += this.buffer[idx] * this.refSin[i];
+          sumQ += this.buffer[idx] * this.refCos[i];
+        }
+
+        this.bufferIdx = (this.bufferIdx + 1) % this.windowSize;
+
+        // Return magnitude
+        return Math.sqrt(sumI * sumI + sumQ * sumQ) * 2 / this.windowSize;
+      }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.process(input[i]);
+        }
+        return out;
+      }
+    }
+
+    // =========================================================================
+    // COHERENT SIGNAL AVERAGING - SNR Enhancement
+    // =========================================================================
+
+    /**
+     * Coherent Averaging - Averages signal synchronized to reference frequency
+     * SNR improves by √N where N = number of averages
+     *
+     * Excellent for extracting weak periodic signals from noise
+     */
+    class CoherentAverager {
+      constructor(targetFreq, sampleRate, numAverages = 10) {
+        this.targetFreq = targetFreq;
+        this.sampleRate = sampleRate;
+        this.numAverages = numAverages;
+
+        // Samples per period
+        this.periodSamples = Math.round(sampleRate / targetFreq);
+
+        // Accumulated average
+        this.accumulator = new Float64Array(this.periodSamples);
+        this.count = 0;
+
+        // Current period buffer
+        this.periodBuffer = new Float64Array(this.periodSamples);
+        this.periodIdx = 0;
+      }
+
+      reset() {
+        this.accumulator.fill(0);
+        this.count = 0;
+        this.periodBuffer.fill(0);
+        this.periodIdx = 0;
+      }
+
+      setFrequency(freq) {
+        this.targetFreq = freq;
+        this.periodSamples = Math.round(this.sampleRate / freq);
+        this.accumulator = new Float64Array(this.periodSamples);
+        this.periodBuffer = new Float64Array(this.periodSamples);
+        this.count = 0;
+        this.periodIdx = 0;
+      }
+
+      /**
+       * Add sample to current period
+       */
+      process(x) {
+        this.periodBuffer[this.periodIdx] = x;
+        this.periodIdx++;
+
+        // End of period?
+        if (this.periodIdx >= this.periodSamples) {
+          // Add to accumulator
+          for (let i = 0; i < this.periodSamples; i++) {
+            this.accumulator[i] += this.periodBuffer[i];
+          }
+          this.count++;
+
+          // Reset period
+          this.periodIdx = 0;
+
+          // Limit number of averages (sliding window effect)
+          if (this.count > this.numAverages) {
+            // Decay old averages
+            const decay = (this.numAverages - 1) / this.numAverages;
+            for (let i = 0; i < this.periodSamples; i++) {
+              this.accumulator[i] *= decay;
+            }
+            this.count = this.numAverages;
+          }
+        }
+
+        // Return current averaged value at this phase
+        if (this.count > 0) {
+          return this.accumulator[this.periodIdx] / this.count;
+        }
+        return x;
+      }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.process(input[i]);
+        }
+        return out;
+      }
+
+      /**
+       * Get current averaged waveform (one period)
+       */
+      getAveragedPeriod() {
+        if (this.count === 0) return null;
+        const result = new Float64Array(this.periodSamples);
+        for (let i = 0; i < this.periodSamples; i++) {
+          result[i] = this.accumulator[i] / this.count;
+        }
+        return result;
+      }
+
+      /**
+       * Estimate SNR improvement
+       */
+      getSNRImprovement() {
+        return Math.sqrt(this.count);
+      }
+    }
+
+    /**
+     * Synchronous Averaging with Phase Tracking
+     * Uses lock-in style phase detection to maintain synchronization
+     */
+    class PhaseLockAverager {
+      constructor(targetFreq, sampleRate, numPeriods = 10, bandwidth = 1) {
+        this.targetFreq = targetFreq;
+        this.sampleRate = sampleRate;
+        this.numPeriods = numPeriods;
+
+        this.periodSamples = Math.round(sampleRate / targetFreq);
+        this.omega = 2 * Math.PI * targetFreq / sampleRate;
+        this.phase = 0;
+
+        // Phase-locked loop bandwidth
+        this.loopBW = bandwidth;
+        const K = 4 * this.loopBW / sampleRate;
+        this.alpha = K;
+        this.beta = K * K / 4;
+
+        // Averaged waveform
+        this.accumulator = new Float64Array(this.periodSamples);
+        this.count = 0;
+      }
+
+      reset() {
+        this.accumulator.fill(0);
+        this.count = 0;
+        this.phase = 0;
+      }
+
+      process(x) {
+        // Phase detector (multiply by reference)
+        const phaseError = x * Math.sin(this.phase);
+
+        // Loop filter (PI controller)
+        this.omega += this.beta * phaseError;
+        this.phase += this.omega + this.alpha * phaseError;
+
+        // Wrap phase
+        while (this.phase > 2 * Math.PI) this.phase -= 2 * Math.PI;
+        while (this.phase < 0) this.phase += 2 * Math.PI;
+
+        // Map phase to accumulator index
+        const idx = Math.floor(this.phase / (2 * Math.PI) * this.periodSamples) % this.periodSamples;
+
+        // Exponential averaging
+        const alpha = 0.1;
+        this.accumulator[idx] = alpha * x + (1 - alpha) * this.accumulator[idx];
+        this.count = Math.min(this.count + 1, this.numPeriods * this.periodSamples);
+
+        return this.accumulator[idx];
+      }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.process(input[i]);
+        }
+        return out;
+      }
+    }
+
+    // =========================================================================
+    // GOERTZEL ALGORITHM - Efficient Single-Frequency DFT
+    // =========================================================================
+
+    /**
+     * Goertzel Algorithm - Computes DFT at single frequency
+     * More efficient than FFT when you only need one frequency bin
+     * Computational complexity: O(N) vs O(N log N) for FFT
+     *
+     * Perfect for tracking 22Hz with high precision
+     */
+    class GoertzelFilter {
+      constructor(targetFreq, sampleRate, blockSize = 100) {
+        this.targetFreq = targetFreq;
+        this.sampleRate = sampleRate;
+        this.blockSize = blockSize;
+
+        // Precompute coefficient
+        this.updateCoefficients();
+
+        // State variables
+        this.s0 = 0;
+        this.s1 = 0;
+        this.s2 = 0;
+        this.sampleCount = 0;
+
+        // Output magnitude and phase
+        this.magnitude = 0;
+        this.phase = 0;
+      }
+
+      updateCoefficients() {
+        const k = Math.round(this.targetFreq * this.blockSize / this.sampleRate);
+        const omega = 2 * Math.PI * k / this.blockSize;
+        this.coeff = 2 * Math.cos(omega);
+        this.cosOmega = Math.cos(omega);
+        this.sinOmega = Math.sin(omega);
+      }
+
+      setFrequency(freq) {
+        this.targetFreq = freq;
+        this.updateCoefficients();
+        this.reset();
+      }
+
+      setBlockSize(size) {
+        this.blockSize = size;
+        this.updateCoefficients();
+        this.reset();
+      }
+
+      reset() {
+        this.s0 = 0;
+        this.s1 = 0;
+        this.s2 = 0;
+        this.sampleCount = 0;
+      }
+
+      /**
+       * Process one sample, returns true when block is complete
+       */
+      processSample(x) {
+        this.s0 = x + this.coeff * this.s1 - this.s2;
+        this.s2 = this.s1;
+        this.s1 = this.s0;
+        this.sampleCount++;
+
+        if (this.sampleCount >= this.blockSize) {
+          // Compute DFT output at end of block
+          const real = this.s1 - this.s2 * this.cosOmega;
+          const imag = this.s2 * this.sinOmega;
+
+          this.magnitude = Math.sqrt(real * real + imag * imag) * 2 / this.blockSize;
+          this.phase = Math.atan2(imag, real);
+
+          // Reset for next block
+          this.s1 = 0;
+          this.s2 = 0;
+          this.sampleCount = 0;
+
+          return true;  // Block complete
+        }
+        return false;
+      }
+
+      /**
+       * Process array and return magnitude envelope
+       */
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        let lastMag = 0;
+
+        for (let i = 0; i < input.length; i++) {
+          if (this.processSample(input[i])) {
+            lastMag = this.magnitude;
+          }
+          out[i] = lastMag;
+        }
+
+        return out;
+      }
+
+      getMagnitude() {
+        return this.magnitude;
+      }
+
+      getPhase() {
+        return this.phase;
+      }
+    }
+
+    /**
+     * Sliding Goertzel - Continuous frequency tracking
+     * Updates every sample instead of waiting for block completion
+     */
+    class SlidingGoertzel {
+      constructor(targetFreq, sampleRate, windowSize = 100) {
+        this.targetFreq = targetFreq;
+        this.sampleRate = sampleRate;
+        this.windowSize = windowSize;
+
+        // Circular buffer for input samples
+        this.buffer = new Float64Array(windowSize);
+        this.bufferIdx = 0;
+
+        // Precompute exponential
+        const omega = 2 * Math.PI * targetFreq / sampleRate;
+        this.wr = Math.cos(omega);
+        this.wi = Math.sin(omega);
+
+        // Running sum components
+        this.sumReal = 0;
+        this.sumImag = 0;
+
+        // Exponential weights for each position (for windowing)
+        this.wReal = new Float64Array(windowSize);
+        this.wImag = new Float64Array(windowSize);
+        for (let i = 0; i < windowSize; i++) {
+          this.wReal[i] = Math.cos(-omega * i);
+          this.wImag[i] = Math.sin(-omega * i);
+        }
+      }
+
+      reset() {
+        this.buffer.fill(0);
+        this.bufferIdx = 0;
+        this.sumReal = 0;
+        this.sumImag = 0;
+      }
+
+      setFrequency(freq) {
+        this.targetFreq = freq;
+        const omega = 2 * Math.PI * freq / this.sampleRate;
+        this.wr = Math.cos(omega);
+        this.wi = Math.sin(omega);
+
+        for (let i = 0; i < this.windowSize; i++) {
+          this.wReal[i] = Math.cos(-omega * i);
+          this.wImag[i] = Math.sin(-omega * i);
+        }
+
+        // Recompute sums with new frequency
+        this.sumReal = 0;
+        this.sumImag = 0;
+        for (let i = 0; i < this.windowSize; i++) {
+          const idx = (this.bufferIdx - i + this.windowSize) % this.windowSize;
+          this.sumReal += this.buffer[idx] * this.wReal[i];
+          this.sumImag += this.buffer[idx] * this.wImag[i];
+        }
+      }
+
+      /**
+       * Process sample and return current magnitude
+       */
+      process(x) {
+        // Remove oldest sample contribution
+        const oldestIdx = (this.bufferIdx + 1) % this.windowSize;
+        const oldest = this.buffer[oldestIdx];
+        this.sumReal -= oldest * this.wReal[this.windowSize - 1];
+        this.sumImag -= oldest * this.wImag[this.windowSize - 1];
+
+        // Rotate existing sums (multiply by e^(-jω))
+        const newReal = this.sumReal * this.wr + this.sumImag * this.wi;
+        const newImag = -this.sumReal * this.wi + this.sumImag * this.wr;
+        this.sumReal = newReal;
+        this.sumImag = newImag;
+
+        // Add new sample (at position 0, weight = 1)
+        this.buffer[this.bufferIdx] = x;
+        this.sumReal += x;
+        // sumImag += x * sin(0) = 0
+
+        this.bufferIdx = (this.bufferIdx + 1) % this.windowSize;
+
+        return Math.sqrt(this.sumReal * this.sumReal + this.sumImag * this.sumImag) * 2 / this.windowSize;
+      }
+
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.process(input[i]);
+        }
+        return out;
+      }
+
+      getMagnitude() {
+        return Math.sqrt(this.sumReal * this.sumReal + this.sumImag * this.sumImag) * 2 / this.windowSize;
+      }
+
+      getPhase() {
+        return Math.atan2(this.sumImag, this.sumReal);
+      }
+    }
+
+    /**
+     * Goertzel Tracking Lock-In - Combines Goertzel with tracking loop
+     * Automatically adjusts to track frequency drift
+     */
+    class GoertzelTrackingLockIn {
+      constructor(targetFreq, sampleRate, blockSize = 100, trackingBW = 0.5) {
+        this.centerFreq = targetFreq;
+        this.sampleRate = sampleRate;
+        this.blockSize = blockSize;
+
+        // Create bank of Goertzel filters around target frequency
+        this.freqSpacing = 0.5;  // Hz between filters
+        this.numFilters = 5;     // Filters on each side + center
+        this.filters = [];
+        this.frequencies = [];
+
+        this.updateFilterBank();
+
+        // Tracking state
+        this.trackedFreq = targetFreq;
+        this.trackingBW = trackingBW;
+        this.alpha = 0.1;  // Tracking smoothing
+
+        // Output
+        this.magnitude = 0;
+        this.phase = 0;
+        this.sampleCount = 0;
+      }
+
+      updateFilterBank() {
+        this.filters = [];
+        this.frequencies = [];
+
+        for (let i = -this.numFilters; i <= this.numFilters; i++) {
+          const freq = this.centerFreq + i * this.freqSpacing;
+          if (freq > 0 && freq < this.sampleRate / 2) {
+            this.filters.push(new GoertzelFilter(freq, this.sampleRate, this.blockSize));
+            this.frequencies.push(freq);
+          }
+        }
+      }
+
+      setFrequency(freq) {
+        this.centerFreq = freq;
+        this.trackedFreq = freq;
+        this.updateFilterBank();
+      }
+
+      reset() {
+        this.filters.forEach(f => f.reset());
+        this.trackedFreq = this.centerFreq;
+        this.magnitude = 0;
+        this.sampleCount = 0;
+      }
+
+      /**
+       * Process sample through all filters and track peak
+       */
+      processSample(x) {
+        let blockComplete = false;
+
+        // Feed sample to all filters
+        for (const filter of this.filters) {
+          if (filter.processSample(x)) {
+            blockComplete = true;
+          }
+        }
+
+        if (blockComplete) {
+          // Find peak among filters
+          let maxMag = 0;
+          let peakFreq = this.centerFreq;
+
+          for (let i = 0; i < this.filters.length; i++) {
+            const mag = this.filters[i].getMagnitude();
+            if (mag > maxMag) {
+              maxMag = mag;
+              peakFreq = this.frequencies[i];
+            }
+          }
+
+          // Update tracked frequency with smoothing
+          this.trackedFreq = this.alpha * peakFreq + (1 - this.alpha) * this.trackedFreq;
+          this.magnitude = maxMag;
+
+          // Get phase from nearest filter
+          const nearestIdx = this.frequencies.findIndex(f =>
+            Math.abs(f - this.trackedFreq) < this.freqSpacing / 2
+          );
+          if (nearestIdx >= 0) {
+            this.phase = this.filters[nearestIdx].getPhase();
+          }
+        }
+
+        this.sampleCount++;
+        return this.magnitude;
+      }
+
+      /**
+       * Process array and return tracked magnitude
+       */
+      processArray(input) {
+        const out = new Float64Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          out[i] = this.processSample(input[i]);
+        }
+        return out;
+      }
+
+      getTrackedFrequency() {
+        return this.trackedFreq;
+      }
+
+      getMagnitude() {
+        return this.magnitude;
+      }
+
+      getPhase() {
+        return this.phase;
+      }
+    }
+
+    /**
+     * Multi-Frequency Goertzel Bank - Monitor multiple frequencies simultaneously
+     * Useful for detecting harmonics or multiple signals
+     */
+    class GoertzelBank {
+      constructor(frequencies, sampleRate, blockSize = 100) {
+        this.sampleRate = sampleRate;
+        this.blockSize = blockSize;
+        this.filters = frequencies.map(f => new GoertzelFilter(f, sampleRate, blockSize));
+        this.frequencies = frequencies.slice();
+        this.magnitudes = new Float64Array(frequencies.length);
+      }
+
+      reset() {
+        this.filters.forEach(f => f.reset());
+        this.magnitudes.fill(0);
+      }
+
+      processSample(x) {
+        let complete = false;
+        for (let i = 0; i < this.filters.length; i++) {
+          if (this.filters[i].processSample(x)) {
+            this.magnitudes[i] = this.filters[i].getMagnitude();
+            complete = true;
+          }
+        }
+        return complete;
+      }
+
+      processArray(input) {
+        // Return magnitude of first (primary) frequency
+        const out = new Float64Array(input.length);
+        let lastMag = 0;
+
+        for (let i = 0; i < input.length; i++) {
+          if (this.processSample(input[i])) {
+            lastMag = this.magnitudes[0];
+          }
+          out[i] = lastMag;
+        }
+        return out;
+      }
+
+      getMagnitudes() {
+        return this.magnitudes;
+      }
+
+      /**
+       * Get spectrum as object { freq: magnitude }
+       */
+      getSpectrum() {
+        const spectrum = {};
+        for (let i = 0; i < this.frequencies.length; i++) {
+          spectrum[this.frequencies[i]] = this.magnitudes[i];
+        }
+        return spectrum;
+      }
+    }
+
+    // =========================================================================
+    // SNR ESTIMATOR - Signal Quality Metric
+    // =========================================================================
+
+    /**
+     * Real-time SNR Estimation
+     * Estimates signal power at target frequency vs. surrounding noise
+     */
+    class SNREstimator {
+      constructor(targetFreq, sampleRate, windowMs = 500) {
+        this.targetFreq = targetFreq;
+        this.sampleRate = sampleRate;
+        this.windowSize = Math.round(windowMs * sampleRate / 1000);
+
+        this.welch = new WelchPSD(256, 0.5, sampleRate);
+        this.buffer = [];
+        this.lastSNR = 0;
+      }
+
+      addSample(x) {
+        this.buffer.push(x);
+        if (this.buffer.length > this.windowSize) {
+          this.buffer.shift();
+        }
+      }
+
+      /**
+       * Estimate current SNR in dB
+       */
+      estimate() {
+        if (this.buffer.length < 256) return 0;
+
+        const { frequencies, psd } = this.welch.estimate(this.buffer);
+
+        // Find signal power (in narrow band around target)
+        const signalBW = 2;  // Hz
+        let signalPower = 0;
+        let signalBins = 0;
+
+        // Find noise power (outside signal band)
+        let noisePower = 0;
+        let noiseBins = 0;
+
+        const binWidth = this.sampleRate / 256;
+
+        for (let i = 0; i < frequencies.length; i++) {
+          if (Math.abs(frequencies[i] - this.targetFreq) < signalBW) {
+            signalPower += psd[i];
+            signalBins++;
+          } else if (frequencies[i] > 5 && frequencies[i] < this.sampleRate / 2 - 5) {
+            noisePower += psd[i];
+            noiseBins++;
+          }
+        }
+
+        if (noiseBins > 0 && signalBins > 0) {
+          const avgSignal = signalPower / signalBins;
+          const avgNoise = noisePower / noiseBins;
+
+          if (avgNoise > 0) {
+            this.lastSNR = 10 * Math.log10(avgSignal / avgNoise);
+          }
+        }
+
+        return this.lastSNR;
+      }
+
+      processArray(input) {
+        for (let i = 0; i < input.length; i++) {
+          this.addSample(input[i]);
+        }
+        return this.estimate();
+      }
+    }
+
+    // =========================================================================
+    // FILTER STATE - Extended with Advanced DSP Modules
     // =========================================================================
 
     const filterState = {
       enabled: false,
       lockInEnabled: false,
+      advancedEnabled: false,  // NEW: Enable advanced cascading pipeline
       sampleRate: 1000,
 
       // Bandpass
       bpFreq: 22,
       bpBandwidth: 10,
       bpOrder: 4,
+      bpType: 'butterworth',  // 'butterworth', 'chebyshev', 'elliptic', 'bessel'
 
       // Notch
       notchEnabled: true,
@@ -658,27 +2628,99 @@
       // PGA
       pgaGain: 4,
 
+      // =====================================================
+      // ADVANCED DSP SETTINGS (New)
+      // =====================================================
+
+      // Median Filter - Impulse noise removal
+      medianEnabled: false,
+      medianWindowSize: 5,
+
+      // Adaptive LMS - Noise prediction/cancellation
+      lmsEnabled: false,
+      lmsLength: 32,
+      lmsMu: 0.01,
+
+      // Comb Filter - Periodic interference
+      combEnabled: false,
+      combFreq: 60,
+      combGain: -0.95,
+
+      // Spectral Subtraction
+      spectralSubEnabled: false,
+      spectralOverSub: 2,
+      spectralFloor: 0.01,
+
+      // Goertzel Tracking Lock-In
+      goertzelEnabled: false,
+      goertzelBlockSize: 100,
+
+      // Matched Filter
+      matchedEnabled: false,
+      matchedPeriods: 2,
+
+      // Coherent Averaging
+      coherentEnabled: false,
+      coherentAverages: 10,
+
+      // Processing Pipeline Order (can be reordered)
+      pipelineOrder: ['median', 'notch', 'comb', 'lms', 'bandpass', 'spectral', 'goertzel', 'lockin', 'matched', 'coherent'],
+
+      // =====================================================
       // Filter instances
+      // =====================================================
       bandpassFilter: null,
       notchFilter: null,
-      lockInAmp: null
+      lockInAmp: null,
+
+      // Advanced instances
+      medianFilter: null,
+      lmsFilter: null,
+      combFilter: null,
+      spectralSub: null,
+      goertzelTracker: null,
+      matchedFilter: null,
+      coherentAverager: null,
+      snrEstimator: null,
+
+      // Metrics
+      lastSNR: 0,
+      trackedFreq: 22
     };
 
     function rebuildFilters() {
-      // Bandpass filter
-      filterState.bandpassFilter = designButterworthBandpass(
-        filterState.bpFreq,
-        filterState.bpBandwidth,
-        filterState.sampleRate,
-        filterState.bpOrder
-      );
+      const fs = filterState.sampleRate;
+      const freq = filterState.bpFreq;
+
+      // Bandpass filter - Select type
+      switch (filterState.bpType) {
+        case 'chebyshev':
+          filterState.bandpassFilter = designChebyshevBandpass(
+            freq, filterState.bpBandwidth, fs, filterState.bpOrder, 1
+          );
+          break;
+        case 'elliptic':
+          filterState.bandpassFilter = designEllipticBandpass(
+            freq, filterState.bpBandwidth, fs, filterState.bpOrder, 0.5, 40
+          );
+          break;
+        case 'bessel':
+          filterState.bandpassFilter = designBesselBandpass(
+            freq, filterState.bpBandwidth, fs, filterState.bpOrder
+          );
+          break;
+        default:  // butterworth
+          filterState.bandpassFilter = designButterworthBandpass(
+            freq, filterState.bpBandwidth, fs, filterState.bpOrder
+          );
+      }
 
       // Notch filter
       if (filterState.notchEnabled) {
         filterState.notchFilter = designNotchFilter(
           filterState.notchFreq,
           filterState.notchQ,
-          filterState.sampleRate,
+          fs,
           filterState.notchStages,
           filterState.notchHarmonics
         );
@@ -691,41 +2733,176 @@
         filterState.lockInAmp = new LockInAmplifier(
           filterState.lockInFreq,
           filterState.lockInTC,
-          filterState.sampleRate
+          fs
         );
       } else {
         filterState.lockInAmp.setFrequency(filterState.lockInFreq);
         filterState.lockInAmp.setTimeConstant(filterState.lockInTC);
       }
 
+      // =====================================================
+      // ADVANCED DSP INSTANCES
+      // =====================================================
+
+      // Median Filter
+      if (filterState.medianEnabled) {
+        filterState.medianFilter = new MedianFilter(filterState.medianWindowSize);
+      } else {
+        filterState.medianFilter = null;
+      }
+
+      // LMS Adaptive Filter
+      if (filterState.lmsEnabled) {
+        filterState.lmsFilter = new NLMSFilter(filterState.lmsLength, filterState.lmsMu);
+      } else {
+        filterState.lmsFilter = null;
+      }
+
+      // Comb Filter for periodic interference
+      if (filterState.combEnabled) {
+        filterState.combFilter = CombFilter.createForFrequency(
+          filterState.combFreq, fs, filterState.combGain
+        );
+      } else {
+        filterState.combFilter = null;
+      }
+
+      // Spectral Subtraction
+      if (filterState.spectralSubEnabled) {
+        filterState.spectralSub = new SpectralSubtraction(
+          256, fs, filterState.spectralOverSub, filterState.spectralFloor
+        );
+      } else {
+        filterState.spectralSub = null;
+      }
+
+      // Goertzel Tracking Lock-In
+      if (filterState.goertzelEnabled) {
+        if (!filterState.goertzelTracker) {
+          filterState.goertzelTracker = new GoertzelTrackingLockIn(
+            freq, fs, filterState.goertzelBlockSize
+          );
+        } else {
+          filterState.goertzelTracker.setFrequency(freq);
+        }
+      } else {
+        filterState.goertzelTracker = null;
+      }
+
+      // Matched Filter
+      if (filterState.matchedEnabled) {
+        if (!filterState.matchedFilter) {
+          filterState.matchedFilter = new MatchedFilter(freq, fs, filterState.matchedPeriods);
+        } else {
+          filterState.matchedFilter.setFrequency(freq);
+        }
+      } else {
+        filterState.matchedFilter = null;
+      }
+
+      // Coherent Averaging
+      if (filterState.coherentEnabled) {
+        if (!filterState.coherentAverager) {
+          filterState.coherentAverager = new CoherentAverager(freq, fs, filterState.coherentAverages);
+        } else {
+          filterState.coherentAverager.setFrequency(freq);
+        }
+      } else {
+        filterState.coherentAverager = null;
+      }
+
+      // SNR Estimator (always active when any processing is on)
+      if (!filterState.snrEstimator) {
+        filterState.snrEstimator = new SNREstimator(freq, fs, 500);
+      }
+
       updateFilterInfo();
       drawFrequencyResponse();
     }
 
+    /**
+     * Apply the cascading filter pipeline
+     * Order: Median -> Notch -> Comb -> LMS -> Bandpass -> Spectral -> Goertzel/LockIn -> Matched -> Coherent
+     */
     function applyFilters(samples) {
       let result = samples;
 
-      // Lock-In mode takes precedence
-      if (filterState.lockInEnabled && filterState.lockInAmp) {
-        // First remove 60Hz if enabled
-        if (filterState.notchEnabled && filterState.notchFilter) {
-          result = filterState.notchFilter.processArray(result);
-        }
-        // Then apply lock-in
-        result = filterState.lockInAmp.processArray(result, filterState.lockInOutput);
+      // If nothing enabled, return raw
+      if (!filterState.enabled && !filterState.lockInEnabled && !filterState.advancedEnabled) {
         return Array.from(result);
       }
 
-      // Standard filter mode
-      if (filterState.enabled) {
-        // Apply notch first (kill 60Hz before anything else)
-        if (filterState.notchEnabled && filterState.notchFilter) {
-          result = filterState.notchFilter.processArray(result);
-        }
-        // Apply bandpass
-        if (filterState.bandpassFilter) {
-          result = filterState.bandpassFilter.processArray(result);
-        }
+      // =====================================================
+      // STAGE 1: IMPULSE NOISE REMOVAL (Median Filter)
+      // =====================================================
+      if (filterState.medianEnabled && filterState.medianFilter) {
+        filterState.medianFilter.reset();
+        result = filterState.medianFilter.processArray(result);
+      }
+
+      // =====================================================
+      // STAGE 2: FIXED FREQUENCY REJECTION (Notch + Comb)
+      // =====================================================
+      if (filterState.notchEnabled && filterState.notchFilter) {
+        result = filterState.notchFilter.processArray(result);
+      }
+
+      if (filterState.combEnabled && filterState.combFilter) {
+        filterState.combFilter.reset();
+        result = filterState.combFilter.processArray(result);
+      }
+
+      // =====================================================
+      // STAGE 3: ADAPTIVE NOISE REMOVAL (LMS)
+      // =====================================================
+      if (filterState.lmsEnabled && filterState.lmsFilter) {
+        result = filterState.lmsFilter.processArray(result, 'predictive', 1);
+      }
+
+      // =====================================================
+      // STAGE 4: SPECTRAL DENOISING
+      // =====================================================
+      if (filterState.spectralSubEnabled && filterState.spectralSub) {
+        result = filterState.spectralSub.process(result);
+      }
+
+      // =====================================================
+      // STAGE 5: BANDPASS FILTERING (Select frequency band)
+      // =====================================================
+      if ((filterState.enabled || filterState.advancedEnabled) && filterState.bandpassFilter) {
+        result = filterState.bandpassFilter.processArray(result);
+      }
+
+      // =====================================================
+      // STAGE 6: FREQUENCY DETECTION / LOCK-IN
+      // =====================================================
+      if (filterState.goertzelEnabled && filterState.goertzelTracker) {
+        // Goertzel tracking mode - outputs magnitude envelope
+        result = filterState.goertzelTracker.processArray(result);
+        filterState.trackedFreq = filterState.goertzelTracker.getTrackedFrequency();
+      } else if (filterState.lockInEnabled && filterState.lockInAmp) {
+        // Standard Lock-In mode
+        result = filterState.lockInAmp.processArray(result, filterState.lockInOutput);
+      }
+
+      // =====================================================
+      // STAGE 7: MATCHED FILTER (Optimal detection)
+      // =====================================================
+      if (filterState.matchedEnabled && filterState.matchedFilter) {
+        filterState.matchedFilter.reset();
+        result = filterState.matchedFilter.processArray(result);
+      }
+
+      // =====================================================
+      // STAGE 8: COHERENT AVERAGING (SNR enhancement)
+      // =====================================================
+      if (filterState.coherentEnabled && filterState.coherentAverager) {
+        result = filterState.coherentAverager.processArray(result);
+      }
+
+      // Update SNR estimate
+      if (filterState.snrEstimator) {
+        filterState.lastSNR = filterState.snrEstimator.processArray(result);
       }
 
       return Array.from(result);
@@ -1004,6 +3181,240 @@
         rebuildFilters();
       });
 
+      // Bandpass Type Selection
+      document.getElementById('bp-type').addEventListener('change', (e) => {
+        filterState.bpType = e.target.value;
+        rebuildFilters();
+      });
+
+      // =====================================================
+      // ADVANCED DSP CONTROLS
+      // =====================================================
+
+      // Helper to update any advanced filter checkbox status
+      const updateAdvancedStatus = () => {
+        const anyAdvanced = filterState.medianEnabled || filterState.combEnabled ||
+                           filterState.lmsEnabled || filterState.spectralSubEnabled ||
+                           filterState.goertzelEnabled || filterState.matchedEnabled ||
+                           filterState.coherentEnabled;
+        filterState.advancedEnabled = anyAdvanced;
+
+        // Update SNR display periodically
+        if (filterState.lastSNR !== 0) {
+          document.getElementById('snr-display').textContent =
+            `SNR: ${filterState.lastSNR.toFixed(1)} dB`;
+        }
+
+        // Update tracked frequency display
+        if (filterState.goertzelEnabled) {
+          document.getElementById('goertzel-tracked').textContent =
+            `${filterState.trackedFreq.toFixed(2)} Hz`;
+        }
+      };
+
+      // Median Filter
+      document.getElementById('median-enabled').addEventListener('change', (e) => {
+        filterState.medianEnabled = e.target.checked;
+        document.getElementById('median-status').textContent = e.target.checked ? 'ON' : 'OFF';
+        updateAdvancedStatus();
+        rebuildFilters();
+      });
+
+      document.getElementById('median-window').addEventListener('input', (e) => {
+        filterState.medianWindowSize = parseInt(e.target.value);
+        document.getElementById('median-window-val').textContent = filterState.medianWindowSize;
+        rebuildFilters();
+      });
+
+      // Comb Filter
+      document.getElementById('comb-enabled').addEventListener('change', (e) => {
+        filterState.combEnabled = e.target.checked;
+        document.getElementById('comb-status').textContent = e.target.checked ? 'ON' : 'OFF';
+        updateAdvancedStatus();
+        rebuildFilters();
+      });
+
+      document.getElementById('comb-freq').addEventListener('input', (e) => {
+        filterState.combFreq = parseInt(e.target.value);
+        document.getElementById('comb-freq-val').textContent = filterState.combFreq + ' Hz';
+        rebuildFilters();
+      });
+
+      document.getElementById('comb-gain').addEventListener('input', (e) => {
+        filterState.combGain = parseFloat(e.target.value);
+        const dB = 20 * Math.log10(Math.abs(1 + filterState.combGain));
+        document.getElementById('comb-gain-val').textContent = dB.toFixed(0) + ' dB';
+        rebuildFilters();
+      });
+
+      // LMS Adaptive Filter
+      document.getElementById('lms-enabled').addEventListener('change', (e) => {
+        filterState.lmsEnabled = e.target.checked;
+        document.getElementById('lms-status').textContent = e.target.checked ? 'ON' : 'OFF';
+        updateAdvancedStatus();
+        rebuildFilters();
+      });
+
+      document.getElementById('lms-length').addEventListener('input', (e) => {
+        filterState.lmsLength = parseInt(e.target.value);
+        document.getElementById('lms-length-val').textContent = filterState.lmsLength;
+        rebuildFilters();
+      });
+
+      document.getElementById('lms-mu').addEventListener('input', (e) => {
+        filterState.lmsMu = parseFloat(e.target.value);
+        document.getElementById('lms-mu-val').textContent = filterState.lmsMu.toFixed(3);
+        rebuildFilters();
+      });
+
+      // Spectral Subtraction
+      document.getElementById('spectral-enabled').addEventListener('change', (e) => {
+        filterState.spectralSubEnabled = e.target.checked;
+        document.getElementById('spectral-status').textContent = e.target.checked ? 'ON' : 'OFF';
+        updateAdvancedStatus();
+        rebuildFilters();
+      });
+
+      document.getElementById('spectral-oversub').addEventListener('input', (e) => {
+        filterState.spectralOverSub = parseFloat(e.target.value);
+        document.getElementById('spectral-oversub-val').textContent = filterState.spectralOverSub.toFixed(1) + 'x';
+        rebuildFilters();
+      });
+
+      document.getElementById('spectral-floor').addEventListener('input', (e) => {
+        filterState.spectralFloor = parseFloat(e.target.value);
+        document.getElementById('spectral-floor-val').textContent = (filterState.spectralFloor * 100).toFixed(1) + '%';
+        rebuildFilters();
+      });
+
+      // Goertzel Tracking
+      document.getElementById('goertzel-enabled').addEventListener('change', (e) => {
+        filterState.goertzelEnabled = e.target.checked;
+        document.getElementById('goertzel-status').textContent = e.target.checked ? 'ON' : 'OFF';
+        updateAdvancedStatus();
+        rebuildFilters();
+      });
+
+      document.getElementById('goertzel-block').addEventListener('input', (e) => {
+        filterState.goertzelBlockSize = parseInt(e.target.value);
+        document.getElementById('goertzel-block-val').textContent = filterState.goertzelBlockSize;
+        rebuildFilters();
+      });
+
+      // Matched Filter
+      document.getElementById('matched-enabled').addEventListener('change', (e) => {
+        filterState.matchedEnabled = e.target.checked;
+        document.getElementById('matched-status').textContent = e.target.checked ? 'ON' : 'OFF';
+        updateAdvancedStatus();
+        rebuildFilters();
+      });
+
+      document.getElementById('matched-periods').addEventListener('input', (e) => {
+        filterState.matchedPeriods = parseInt(e.target.value);
+        document.getElementById('matched-periods-val').textContent = filterState.matchedPeriods;
+        rebuildFilters();
+      });
+
+      // Coherent Averaging
+      document.getElementById('coherent-enabled').addEventListener('change', (e) => {
+        filterState.coherentEnabled = e.target.checked;
+        document.getElementById('coherent-status').textContent = e.target.checked ? 'ON' : 'OFF';
+        updateAdvancedStatus();
+        rebuildFilters();
+      });
+
+      document.getElementById('coherent-avg').addEventListener('input', (e) => {
+        filterState.coherentAverages = parseInt(e.target.value);
+        document.getElementById('coherent-avg-val').textContent = filterState.coherentAverages;
+        // Calculate SNR boost: 10*log10(N) dB
+        const snrBoost = 10 * Math.log10(filterState.coherentAverages);
+        document.getElementById('coherent-snr').textContent = '+' + snrBoost.toFixed(1) + ' dB';
+        rebuildFilters();
+      });
+
+      // =====================================================
+      // QUICK PRESETS
+      // =====================================================
+
+      const applyPreset = (preset) => {
+        // Reset all
+        filterState.medianEnabled = false;
+        filterState.combEnabled = false;
+        filterState.lmsEnabled = false;
+        filterState.spectralSubEnabled = false;
+        filterState.goertzelEnabled = false;
+        filterState.matchedEnabled = false;
+        filterState.coherentEnabled = false;
+
+        switch (preset) {
+          case 'light':
+            filterState.medianEnabled = true;
+            filterState.notchEnabled = true;
+            break;
+          case 'medium':
+            filterState.medianEnabled = true;
+            filterState.notchEnabled = true;
+            filterState.lmsEnabled = true;
+            filterState.enabled = true;  // Bandpass
+            break;
+          case 'heavy':
+            filterState.medianEnabled = true;
+            filterState.notchEnabled = true;
+            filterState.lmsEnabled = true;
+            filterState.spectralSubEnabled = true;
+            filterState.matchedEnabled = true;
+            filterState.enabled = true;
+            break;
+          case 'max':
+            filterState.medianEnabled = true;
+            filterState.combEnabled = true;
+            filterState.notchEnabled = true;
+            filterState.lmsEnabled = true;
+            filterState.spectralSubEnabled = true;
+            filterState.goertzelEnabled = true;
+            filterState.matchedEnabled = true;
+            filterState.coherentEnabled = true;
+            filterState.enabled = true;
+            break;
+        }
+
+        // Update UI checkboxes
+        document.getElementById('median-enabled').checked = filterState.medianEnabled;
+        document.getElementById('median-status').textContent = filterState.medianEnabled ? 'ON' : 'OFF';
+        document.getElementById('comb-enabled').checked = filterState.combEnabled;
+        document.getElementById('comb-status').textContent = filterState.combEnabled ? 'ON' : 'OFF';
+        document.getElementById('lms-enabled').checked = filterState.lmsEnabled;
+        document.getElementById('lms-status').textContent = filterState.lmsEnabled ? 'ON' : 'OFF';
+        document.getElementById('spectral-enabled').checked = filterState.spectralSubEnabled;
+        document.getElementById('spectral-status').textContent = filterState.spectralSubEnabled ? 'ON' : 'OFF';
+        document.getElementById('goertzel-enabled').checked = filterState.goertzelEnabled;
+        document.getElementById('goertzel-status').textContent = filterState.goertzelEnabled ? 'ON' : 'OFF';
+        document.getElementById('matched-enabled').checked = filterState.matchedEnabled;
+        document.getElementById('matched-status').textContent = filterState.matchedEnabled ? 'ON' : 'OFF';
+        document.getElementById('coherent-enabled').checked = filterState.coherentEnabled;
+        document.getElementById('coherent-status').textContent = filterState.coherentEnabled ? 'ON' : 'OFF';
+
+        updateAdvancedStatus();
+        rebuildFilters();
+      };
+
+      document.getElementById('preset-light').addEventListener('click', () => applyPreset('light'));
+      document.getElementById('preset-medium').addEventListener('click', () => applyPreset('medium'));
+      document.getElementById('preset-heavy').addEventListener('click', () => applyPreset('heavy'));
+      document.getElementById('preset-max').addEventListener('click', () => applyPreset('max'));
+
+      // Update SNR/tracked freq display periodically
+      setInterval(() => {
+        if (filterState.lastSNR !== 0) {
+          document.getElementById('snr-display').textContent =
+            `SNR: ${filterState.lastSNR.toFixed(1)} dB`;
+        }
+        if (filterState.goertzelEnabled && filterState.goertzelTracker) {
+          document.getElementById('goertzel-tracked').textContent =
+            `${filterState.trackedFreq.toFixed(2)} Hz`;
+        }
+      }, 500);
+
       rebuildFilters();
     }
 
@@ -1014,6 +3425,8 @@
     const statusEl = document.getElementById('status');
     const viewEl = document.getElementById('view');
     const followBtn = document.getElementById('follow');
+    const viewWindowSelect = document.getElementById('view-window');
+    const pauseBtn = document.getElementById('pause-scroll');
 
     const BUFFER_SECONDS = 45;
     const SAMPLE_RATE_HZ = 1000;
@@ -1021,9 +3434,17 @@
 
     let plotInitialized = false;
     let followLive = true;
+    let paused = false;
     let suppressRelayout = false;
-    let nextTime = null;
-    let lastTime = null;
+
+    // Timing state
+    let nextTime = null;           // Next timestamp to assign
+    let bufferStartTime = null;    // Oldest timestamp currently in buffer (moves forward!)
+    let bufferEndTime = null;      // Newest timestamp in buffer
+    let totalSamplesReceived = 0;  // Total samples since start
+
+    // View settings
+    let viewWindowSeconds = 45;    // 0 = show all buffered data
 
     function initPlot() {
       Plotly.newPlot('scope', [{
@@ -1035,21 +3456,70 @@
         paper_bgcolor: '#000',
         plot_bgcolor: '#000',
         showlegend: false,
-        xaxis: { title: 'Time (s)', showgrid: true, gridcolor: '#222', zeroline: false, tickfont: { color: '#888', size: 10 } },
-        yaxis: { title: 'Counts', showgrid: true, gridcolor: '#222', tickfont: { color: '#888', size: 10 }, autorange: true }
+        xaxis: {
+          title: 'Time (s)',
+          showgrid: true,
+          gridcolor: '#222',
+          zeroline: false,
+          tickfont: { color: '#888', size: 10 }
+        },
+        yaxis: {
+          title: 'Counts',
+          showgrid: true,
+          gridcolor: '#222',
+          tickfont: { color: '#888', size: 10 },
+          autorange: true
+        }
       }, {
-        responsive: true, displaylogo: false, modeBarButtonsToRemove: ['select2d', 'lasso2d']
+        responsive: true,
+        displaylogo: false,
+        modeBarButtonsToRemove: ['select2d', 'lasso2d'],
+        scrollZoom: true
       }).then((gd) => {
-        gd.on('plotly_relayout', () => { if (!suppressRelayout) followLive = false; });
+        gd.on('plotly_relayout', (e) => {
+          if (!suppressRelayout && e['xaxis.range[0]'] !== undefined) {
+            followLive = false;
+            updatePauseButton();
+          }
+        });
       });
       plotInitialized = true;
     }
 
-    function setLiveView() {
-      if (lastTime == null) return;
+    function updatePauseButton() {
+      if (paused || !followLive) {
+        pauseBtn.textContent = 'Resume';
+        pauseBtn.classList.add('active');
+      } else {
+        pauseBtn.textContent = 'Pause';
+        pauseBtn.classList.remove('active');
+      }
+    }
+
+    function updateView() {
+      if (bufferEndTime == null || bufferStartTime == null) return;
+
       suppressRelayout = true;
-      Plotly.relayout('scope', { 'xaxis.range': [lastTime - BUFFER_SECONDS, lastTime] })
-        .then(() => { suppressRelayout = false; });
+
+      // Calculate visible range based on what's actually in the buffer
+      let xStart, xEnd;
+
+      if (viewWindowSeconds === 0) {
+        // Show all data in buffer
+        xStart = bufferStartTime;
+        xEnd = bufferEndTime;
+      } else {
+        // Show last N seconds, but clamp to buffer bounds
+        xEnd = bufferEndTime;
+        xStart = Math.max(bufferStartTime, bufferEndTime - viewWindowSeconds);
+      }
+
+      // Add small padding
+      const padding = (xEnd - xStart) * 0.02;
+
+      Plotly.relayout('scope', {
+        'xaxis.range': [xStart - padding, xEnd + padding]
+      }).then(() => { suppressRelayout = false; });
     }
 
     function appendFrame(msg) {
@@ -1059,27 +3529,77 @@
 
       const frameLen = geo.length;
       const dt = 1.0 / SAMPLE_RATE_HZ;
-      if (nextTime === null) nextTime = msg.t0 || 0;
+
+      // Initialize timing on first frame
+      if (nextTime === null) {
+        nextTime = 0;  // Start at 0 for simplicity
+        bufferStartTime = 0;
+      }
 
       // Apply filters
-      if (filterState.enabled || filterState.lockInEnabled) {
+      if (filterState.enabled || filterState.lockInEnabled || filterState.advancedEnabled) {
         geo = applyFilters(geo);
       }
 
+      // Build timestamp array for this frame
       const xs = new Array(frameLen);
-      for (let i = 0; i < frameLen; i++) xs[i] = nextTime + i * dt;
-      nextTime += frameLen * dt;
-      lastTime = xs[frameLen - 1];
+      for (let i = 0; i < frameLen; i++) {
+        xs[i] = nextTime + i * dt;
+      }
 
+      // Update timing state
+      const frameStartTime = nextTime;
+      nextTime += frameLen * dt;
+      bufferEndTime = nextTime - dt;  // Last sample timestamp
+      totalSamplesReceived += frameLen;
+
+      // Calculate buffer start time (oldest data still in buffer)
+      // After MAX_POINTS, old data gets dropped
+      const samplesInBuffer = Math.min(totalSamplesReceived, MAX_POINTS);
+      bufferStartTime = bufferEndTime - (samplesInBuffer - 1) * dt;
+
+      // Add data to chart
       Plotly.extendTraces('scope', { x: [xs], y: [geo] }, [0], MAX_POINTS);
 
-      const mode = filterState.lockInEnabled ? ' [LOCK-IN]' : (filterState.enabled ? ' [FILTERED]' : '');
-      viewEl.textContent = `${lastTime.toFixed(1)}s${mode}`;
+      // Update status display
+      let mode = '';
+      if (filterState.goertzelEnabled) mode = ' [GOERTZEL]';
+      else if (filterState.lockInEnabled) mode = ' [LOCK-IN]';
+      else if (filterState.advancedEnabled) mode = ' [ADVANCED]';
+      else if (filterState.enabled) mode = ' [FILTERED]';
 
-      if (followLive) setLiveView();
+      const bufferDuration = bufferEndTime - bufferStartTime;
+      viewEl.textContent = `${bufferEndTime.toFixed(1)}s (buf: ${bufferDuration.toFixed(0)}s)${mode}`;
+
+      // Update view if following live
+      if (followLive && !paused) {
+        updateView();
+      }
     }
 
-    followBtn.addEventListener('click', () => { followLive = true; setLiveView(); });
+    // View window selector
+    viewWindowSelect.addEventListener('change', (e) => {
+      viewWindowSeconds = parseInt(e.target.value);
+      updateView();
+    });
+
+    // Pause/Resume button
+    pauseBtn.addEventListener('click', () => {
+      paused = !paused;
+      if (!paused) {
+        followLive = true;
+        updateView();
+      }
+      updatePauseButton();
+    });
+
+    // Jump to live button
+    followBtn.addEventListener('click', () => {
+      followLive = true;
+      paused = false;
+      updatePauseButton();
+      updateView();
+    });
 
     function connectWS() {
       const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
